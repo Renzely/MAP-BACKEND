@@ -5,11 +5,8 @@ const AWS = require("aws-sdk");
 const app = express();
 app.use(cors());
 app.use(express.json());
-// const Attendance = require("./attendance");
 const auth = require("./auth");
-// const QTTProcess = require("./QTT");
-// const Competitors = require("./competitors");
-// const Expiry = require("./expiry");
+const RecentActivity = require("./recentActivity");
 const MerchAccount = require("./MerchAccount");
 const bcrypt = require("bcryptjs");
 const User = require("./users");
@@ -51,7 +48,7 @@ mongoose
   .then(() => console.log("✅ Connected to MongoDB Atlas"))
   .catch((err) => console.error("❌ MongoDB connection error:", err));
 
-// ATTENDANCE
+// Submission on employes requirements
 
 const s3 = new AWS.S3({
   accessKeyId: process.env.AWS_ACCESS_KEY_ID,
@@ -59,18 +56,19 @@ const s3 = new AWS.S3({
   region: process.env.AWS_REGION,
 });
 
-app.post("/save-attendance-images", (req, res) => {
-  const { fileName } = req.body;
+app.post("/save-requirements-images", (req, res) => {
+  const { fileName, fileType } = req.body; // get file type from frontend
 
   const params = {
-    Bucket: "rc-ugc-react-attendance",
+    Bucket: "mmp-portal-docs",
     Key: fileName,
     Expires: 60,
-    ContentType: "image/jpeg",
+    ContentType: fileType, // use the file's actual MIME type
   };
 
   s3.getSignedUrl("putObject", params, (err, url) => {
     if (err) {
+      console.error("S3 Error:", err);
       return res
         .status(500)
         .json({ error: "Failed to generate pre-signed URL" });
@@ -266,28 +264,126 @@ app.put("/update-employee/:id", async (req, res) => {
     const employeeId = req.params.id;
     const updatedData = req.body;
 
-    // ✅ Validate ObjectId
+    // ✅ Validate employee ID
     if (!mongoose.Types.ObjectId.isValid(employeeId)) {
       return res.status(400).json({ message: "Invalid employee ID" });
     }
 
-    // ✅ Perform update
-    const result = await MerchAccount.findByIdAndUpdate(
-      employeeId,
-      { $set: updatedData },
-      { new: true } // returns updated document
-    );
-
-    if (!result) {
+    // ✅ Fetch original employee data
+    const original = await MerchAccount.findById(employeeId);
+    if (!original) {
       return res.status(404).json({ message: "Employee not found" });
     }
 
+    // ✅ Update employee
+    const result = await MerchAccount.findByIdAndUpdate(
+      employeeId,
+      { $set: updatedData },
+      { new: true }
+    );
+
+    // ✅ Readable field names for tracking
+    const fieldLabels = {
+      company: "Company",
+      status: "Status",
+      remarks: "Remarks",
+      employeeNo: "Employee Number",
+      firstName: "First Name",
+      middleName: "Middle Name",
+      lastName: "Last Name",
+      modeOfDisbursement: "Mode of Disbursement",
+      accountNumber: "Account Number",
+      contact: "Contact Number",
+      email: "Email Address",
+      birthday: "Birthday",
+      age: "Age",
+      sss: "SSS",
+      philhealth: "PhilHealth",
+      hdmf: "HDMF",
+      tin: "TIN",
+      position: "Position",
+      dateHired: "Date Hired",
+      homeAddress: "Home Address",
+      silBalance: "SIL Balance",
+      clientAssigned: "Client Assigned",
+    };
+
+    // ✅ Detect changes
+    const changes = [];
+    for (const key in updatedData) {
+      const newValue = updatedData[key];
+      const oldValue = original[key];
+
+      if (
+        (newValue === undefined && oldValue === undefined) ||
+        (newValue === "" && oldValue === "") ||
+        JSON.stringify(newValue) === JSON.stringify(oldValue)
+      ) {
+        continue; // Skip unchanged values
+      }
+
+      const label = fieldLabels[key] || key;
+      changes.push({
+        field: label,
+        oldValue: oldValue ?? "N/A",
+        newValue: newValue ?? "N/A",
+      });
+    }
+
+    // ✅ Identify admin who made the update
+    let adminName = "Unknown Admin";
+    let admin = null;
+
+    if (updatedData.updatedBy) {
+      if (mongoose.Types.ObjectId.isValid(updatedData.updatedBy)) {
+        admin = await AdminUser.findById(updatedData.updatedBy);
+      } else {
+        admin = await AdminUser.findOne({
+          emailAddress: updatedData.updatedBy,
+        });
+      }
+    }
+
+    if (admin) {
+      adminName =
+        `${admin.firstName || ""} ${admin.lastName || ""}`.trim() ||
+        admin.emailAddress ||
+        admin.roleAccount ||
+        "Unknown Admin";
+    } else if (updatedData.updatedBy) {
+      adminName = updatedData.updatedBy; // fallback if not found
+    }
+
+    // ✅ Save recent activity log
+    if (changes.length > 0) {
+      await RecentActivity.create({
+        employeeName: `${original.firstName || ""} ${
+          original.lastName || ""
+        }`.trim(),
+        updatedBy: adminName,
+        changes,
+        date: new Date(),
+      });
+    }
+
+    // ✅ Send success response
     res.status(200).json({
       message: "Employee details updated successfully!",
       updatedEmployee: result,
     });
   } catch (error) {
     console.error("❌ Error updating employee:", error);
+    res.status(500).json({ message: "Server error", error });
+  }
+});
+
+app.get("/recent-activities", async (req, res) => {
+  try {
+    const activities = await RecentActivity.find().sort({ date: -1 }).limit(50); // show most recent 50
+
+    res.status(200).json({ data: activities });
+  } catch (error) {
+    console.error("❌ Error fetching recent activities:", error);
     res.status(500).json({ message: "Server error", error });
   }
 });
@@ -302,6 +398,8 @@ app.post("/create-merch-account", async (req, res) => {
       firstName,
       middleName,
       lastName,
+      modeOfDisbursement,
+      accountNumber,
       contact,
       email,
       birthday,
@@ -315,6 +413,7 @@ app.post("/create-merch-account", async (req, res) => {
       homeAddress,
       silBalance,
       clientAssigned,
+      requirementsImages, // 👈 include this from frontend
     } = req.body;
 
     // Validation (optional fields excluded)
@@ -325,6 +424,8 @@ app.post("/create-merch-account", async (req, res) => {
       !employeeNo ||
       !firstName ||
       !lastName ||
+      !modeOfDisbursement ||
+      !accountNumber ||
       !contact ||
       !email ||
       !birthday ||
@@ -343,7 +444,7 @@ app.post("/create-merch-account", async (req, res) => {
       return res.status(409).json({ message: "Email already exists" });
     }
 
-    // Create new merch account
+    // ✅ Create new merch account with uploaded images
     const newAccount = new MerchAccount({
       company,
       status,
@@ -352,6 +453,8 @@ app.post("/create-merch-account", async (req, res) => {
       firstName,
       middleName,
       lastName,
+      modeOfDisbursement,
+      accountNumber,
       contact,
       email,
       birthday,
@@ -365,6 +468,7 @@ app.post("/create-merch-account", async (req, res) => {
       homeAddress,
       silBalance,
       clientAssigned,
+      requirementsImages: requirementsImages || [], // 👈 save array of URLs
     });
 
     await newAccount.save();
@@ -390,6 +494,8 @@ app.get("/get-merch-accounts", async (req, res) => {
         firstName: 1,
         middleName: 1,
         lastName: 1,
+        modeOfDisbursement: 1,
+        accountNumber: 1,
         contact: 1,
         email: 1,
         birthday: 1,
@@ -403,6 +509,7 @@ app.get("/get-merch-accounts", async (req, res) => {
         homeAddress: 1,
         silBalance: 1,
         clientAssigned: 1,
+        requirementsImages: 1, // ✅ include photo field
       }
     );
 
