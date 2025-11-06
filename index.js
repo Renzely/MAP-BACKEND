@@ -393,13 +393,13 @@ app.post("/check-duplicate-ids", async (req, res) => {
     const { sss, philhealth, hdmf, tin } = req.body;
 
     const conditions = [];
-    if (sss) conditions.push({ sss });
-    if (philhealth) conditions.push({ philhealth });
-    if (hdmf) conditions.push({ hdmf });
-    if (tin) conditions.push({ tin });
+    if (sss?.trim()) conditions.push({ sss });
+    if (philhealth?.trim()) conditions.push({ philhealth });
+    if (hdmf?.trim()) conditions.push({ hdmf });
+    if (tin?.trim()) conditions.push({ tin });
 
     if (conditions.length === 0) {
-      return res.status(400).json({ message: "No fields to check." });
+      return res.status(200).json({ message: "No duplicates found." });
     }
 
     // Check any record that matches any of the given numbers
@@ -461,7 +461,7 @@ app.post("/create-merch-account", async (req, res) => {
       requirementsImages,
     } = req.body;
 
-    // ✅ Check required fields
+    // ✅ Check required fields (excluding optional ones)
     if (
       !company ||
       !status ||
@@ -470,7 +470,6 @@ app.post("/create-merch-account", async (req, res) => {
       !firstName ||
       !lastName ||
       !modeOfDisbursement ||
-      (!accountNumber && modeOfDisbursement !== "TBA") || // <-- allow TBA
       !contact ||
       !birthday ||
       !position ||
@@ -482,26 +481,15 @@ app.post("/create-merch-account", async (req, res) => {
       return res.status(400).json({ message: "Missing required fields" });
     }
 
-    // ✅ Check for duplicate email
-    const existingEmail = await MerchAccount.findOne({ email });
-    if (existingEmail) {
-      return res.status(409).json({ message: "Email already exists" });
-    }
-
-    // ✅ Check for duplicates in SSS, PhilHealth, HDMF, TIN
+    // ✅ Check duplicates only for non-empty optional fields
     const duplicateFields = [];
+    const optionalFields = { email, sss, philhealth, hdmf, tin };
 
-    if (sss && (await MerchAccount.findOne({ sss }))) {
-      duplicateFields.push("SSS");
-    }
-    if (philhealth && (await MerchAccount.findOne({ philhealth }))) {
-      duplicateFields.push("PhilHealth");
-    }
-    if (hdmf && (await MerchAccount.findOne({ hdmf }))) {
-      duplicateFields.push("HDMF");
-    }
-    if (tin && (await MerchAccount.findOne({ tin }))) {
-      duplicateFields.push("TIN");
+    for (const [key, value] of Object.entries(optionalFields)) {
+      if (value?.trim()) {
+        const exists = await MerchAccount.findOne({ [key]: value });
+        if (exists) duplicateFields.push(key.toUpperCase());
+      }
     }
 
     if (duplicateFields.length > 0) {
@@ -510,7 +498,7 @@ app.post("/create-merch-account", async (req, res) => {
       });
     }
 
-    // ✅ Create and save new account
+    // ✅ Prepare new account data
     const newAccount = new MerchAccount({
       company,
       status,
@@ -520,15 +508,16 @@ app.post("/create-merch-account", async (req, res) => {
       middleName,
       lastName,
       modeOfDisbursement,
-      accountNumber: accountNumber || null, // ensure TBA is saved as null
+      accountNumber:
+        modeOfDisbursement === "TBA" || !accountNumber ? null : accountNumber,
       contact,
-      email,
+      email: email?.trim() || undefined, // undefined avoids MongoDB duplicate key error
       birthday,
-      age,
-      sss,
-      philhealth,
-      hdmf,
-      tin,
+      age: age || null,
+      sss: sss?.trim() || undefined,
+      philhealth: philhealth?.trim() || undefined,
+      hdmf: hdmf?.trim() || undefined,
+      tin: tin?.trim() || undefined,
       position,
       dateHired,
       homeAddress,
@@ -537,6 +526,7 @@ app.post("/create-merch-account", async (req, res) => {
       requirementsImages: requirementsImages || [],
     });
 
+    // ✅ Save account
     await newAccount.save();
 
     return res
@@ -544,6 +534,15 @@ app.post("/create-merch-account", async (req, res) => {
       .json({ message: "Account created successfully", data: newAccount });
   } catch (error) {
     console.error("Error creating merch account:", error);
+
+    // Handle MongoDB duplicate key error for safety
+    if (error.code === 11000) {
+      const dupField = Object.keys(error.keyPattern)[0].toUpperCase();
+      return res.status(409).json({
+        message: `Duplicate found in: ${dupField}`,
+      });
+    }
+
     return res.status(500).json({ message: "Internal server error" });
   }
 });
