@@ -470,7 +470,7 @@ app.post("/create-merch-account", async (req, res) => {
       !firstName ||
       !lastName ||
       !modeOfDisbursement ||
-      !accountNumber ||
+      (!accountNumber && modeOfDisbursement !== "TBA") || // <-- allow TBA
       !contact ||
       !birthday ||
       !position ||
@@ -520,7 +520,7 @@ app.post("/create-merch-account", async (req, res) => {
       middleName,
       lastName,
       modeOfDisbursement,
-      accountNumber,
+      accountNumber: accountNumber || null, // ensure TBA is saved as null
       contact,
       email,
       birthday,
