@@ -388,6 +388,51 @@ app.get("/recent-activities", async (req, res) => {
   }
 });
 
+app.post("/check-duplicate-ids", async (req, res) => {
+  try {
+    const { sss, philhealth, hdmf, tin } = req.body;
+
+    const conditions = [];
+    if (sss) conditions.push({ sss });
+    if (philhealth) conditions.push({ philhealth });
+    if (hdmf) conditions.push({ hdmf });
+    if (tin) conditions.push({ tin });
+
+    if (conditions.length === 0) {
+      return res.status(400).json({ message: "No fields to check." });
+    }
+
+    // Check any record that matches any of the given numbers
+    const existing = await MerchAccount.find({
+      $or: conditions,
+    });
+
+    if (existing.length > 0) {
+      const duplicates = {};
+      existing.forEach((record) => {
+        if (sss && record.sss === sss)
+          duplicates.sss = "SSS number already exists.";
+        if (philhealth && record.philhealth === philhealth)
+          duplicates.philhealth = "PhilHealth number already exists.";
+        if (hdmf && record.hdmf === hdmf)
+          duplicates.hdmf = "HDMF number already exists.";
+        if (tin && record.tin === tin)
+          duplicates.tin = "TIN number already exists.";
+      });
+
+      return res.status(409).json({
+        message: "Duplicate detected.",
+        duplicates,
+      });
+    }
+
+    res.status(200).json({ message: "No duplicates found." });
+  } catch (error) {
+    console.error("Error checking duplicates:", error);
+    res.status(500).json({ message: "Server error." });
+  }
+});
+
 app.post("/create-merch-account", async (req, res) => {
   try {
     const {
@@ -413,10 +458,10 @@ app.post("/create-merch-account", async (req, res) => {
       homeAddress,
       silBalance,
       clientAssigned,
-      requirementsImages, // 👈 include this from frontend
+      requirementsImages,
     } = req.body;
 
-    // Validation (optional fields excluded)
+    // ✅ Check required fields
     if (
       !company ||
       !status ||
@@ -427,7 +472,6 @@ app.post("/create-merch-account", async (req, res) => {
       !modeOfDisbursement ||
       !accountNumber ||
       !contact ||
-      !email ||
       !birthday ||
       !position ||
       !dateHired ||
@@ -438,13 +482,35 @@ app.post("/create-merch-account", async (req, res) => {
       return res.status(400).json({ message: "Missing required fields" });
     }
 
-    // Check for duplicate email
-    const existing = await MerchAccount.findOne({ email });
-    if (existing) {
+    // ✅ Check for duplicate email
+    const existingEmail = await MerchAccount.findOne({ email });
+    if (existingEmail) {
       return res.status(409).json({ message: "Email already exists" });
     }
 
-    // ✅ Create new merch account with uploaded images
+    // ✅ Check for duplicates in SSS, PhilHealth, HDMF, TIN
+    const duplicateFields = [];
+
+    if (sss && (await MerchAccount.findOne({ sss }))) {
+      duplicateFields.push("SSS");
+    }
+    if (philhealth && (await MerchAccount.findOne({ philhealth }))) {
+      duplicateFields.push("PhilHealth");
+    }
+    if (hdmf && (await MerchAccount.findOne({ hdmf }))) {
+      duplicateFields.push("HDMF");
+    }
+    if (tin && (await MerchAccount.findOne({ tin }))) {
+      duplicateFields.push("TIN");
+    }
+
+    if (duplicateFields.length > 0) {
+      return res.status(409).json({
+        message: `Duplicate found in: ${duplicateFields.join(", ")}.`,
+      });
+    }
+
+    // ✅ Create and save new account
     const newAccount = new MerchAccount({
       company,
       status,
@@ -468,17 +534,17 @@ app.post("/create-merch-account", async (req, res) => {
       homeAddress,
       silBalance,
       clientAssigned,
-      requirementsImages: requirementsImages || [], // 👈 save array of URLs
+      requirementsImages: requirementsImages || [],
     });
 
     await newAccount.save();
 
-    res
+    return res
       .status(200)
       .json({ message: "Account created successfully", data: newAccount });
   } catch (error) {
     console.error("Error creating merch account:", error);
-    res.status(500).json({ message: "Internal server error" });
+    return res.status(500).json({ message: "Internal server error" });
   }
 });
 

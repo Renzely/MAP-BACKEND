@@ -12,7 +12,18 @@ const merchAccountSchema = new mongoose.Schema(
     modeOfDisbursement: { type: String, required: true },
     accountNumber: { type: String, required: true },
     contact: { type: String, required: true },
-    email: { type: String, required: true, unique: true },
+    email: {
+      type: String,
+      required: false, // allow missing email
+      unique: true,
+      sparse: true,
+      validate: {
+        validator: function (v) {
+          return !v || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v);
+        },
+        message: (props) => `${props.value} is not a valid email address!`,
+      },
+    },
     birthday: { type: Date, required: true },
     age: { type: Number },
     sss: { type: String },
