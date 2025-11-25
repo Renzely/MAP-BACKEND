@@ -38,6 +38,11 @@ const merchAccountSchema = new mongoose.Schema(
 
     // 🆕 Add this line to store S3 image URL
     requirementsImages: [{ type: String }],
+
+    createdBy: {
+      type: String, // or change to ObjectId if you want relation later
+      required: true,
+    },
   },
   { timestamps: true }
 );
