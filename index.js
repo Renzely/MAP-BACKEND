@@ -459,6 +459,7 @@ app.post("/create-merch-account", async (req, res) => {
       silBalance,
       clientAssigned,
       requirementsImages,
+      createdBy,
     } = req.body;
 
     // ✅ Check required fields (excluding optional ones)
@@ -498,6 +499,10 @@ app.post("/create-merch-account", async (req, res) => {
       });
     }
 
+    if (!createdBy) {
+      return res.status(400).json({ message: "Missing admin creator info" });
+    }
+
     // ✅ Prepare new account data
     const newAccount = new MerchAccount({
       company,
@@ -524,6 +529,7 @@ app.post("/create-merch-account", async (req, res) => {
       silBalance,
       clientAssigned,
       requirementsImages: requirementsImages || [],
+      createdBy,
     });
 
     // ✅ Save account
@@ -544,6 +550,74 @@ app.post("/create-merch-account", async (req, res) => {
     }
 
     return res.status(500).json({ message: "Internal server error" });
+  }
+});
+
+app.get("/get-merch-accounts-dashboard", async (req, res) => {
+  try {
+    const { company, clientAssigned, year } = req.query;
+
+    const filter = {};
+    if (company) {
+      filter.company = { $regex: new RegExp(`^${company.trim()}$`, "i") };
+    }
+    if (clientAssigned) {
+      filter.clientAssigned = {
+        $regex: new RegExp(`^${clientAssigned.trim()}$`, "i"),
+      };
+    }
+
+    if (year) {
+      filter.dateHired = {
+        $gte: new Date(`${year}-01-01`),
+        $lte: new Date(`${year}-12-31`),
+      };
+    }
+
+    const accounts = await MerchAccount.find(filter, {
+      company: 1,
+      clientAssigned: 1,
+      remarks: 1,
+      status: 1,
+      employeeNo: 1,
+      firstName: 1,
+      lastName: 1,
+      position: 1,
+      dateHired: 1,
+      createdBy: 1,
+    });
+
+    console.log("Filter used:", filter, "Accounts found:", accounts.length);
+
+    const mapStatus = (remarks) => {
+      if (!remarks) return "unknown";
+      const s = remarks.toLowerCase();
+      switch (s) {
+        case "active":
+          return "employed";
+        case "resign":
+          return "resign";
+        case "applicant":
+          return "applicant";
+        case "terminate":
+          return "terminate";
+        case "end of contract":
+          return "end of contract";
+        default:
+          return "unknown";
+      }
+    };
+
+    const normalizedAccounts = accounts.map((a) => ({
+      ...a._doc,
+      normalizedStatus: mapStatus(a.remarks), // <-- safer
+      dateHired: a.dateHired ? new Date(a.dateHired) : null,
+    }));
+
+    res.status(200).json(normalizedAccounts);
+  } catch (error) {
+    console.error("Error fetching accounts:", error);
+    res.status(500).json({ message: "Failed to fetch accounts" });
   }
 });
 
