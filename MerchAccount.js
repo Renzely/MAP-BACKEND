@@ -32,6 +32,7 @@ const merchAccountSchema = new mongoose.Schema(
     tin: { type: String },
     position: { type: String, required: true },
     dateHired: { type: Date, required: true },
+    dateResigned: { type: Date },
     homeAddress: { type: String, required: true },
     silBalance: { type: String },
     clientAssigned: { type: String, required: true },
