@@ -259,6 +259,61 @@ app.post("/get-all-user", async (req, res) => {
   }
 });
 
+app.post("/export-merch-accounts", async (req, res) => {
+  try {
+    const { remarks, clientAssigned } = req.body;
+
+    const filter = {};
+
+    // Remarks filter (skip if UNFILTERED)
+    if (remarks && remarks !== "UNFILTERED") {
+      filter.remarks = remarks;
+    }
+
+    // Client filter (skip if ALL)
+    if (clientAssigned && clientAssigned !== "ALL") {
+      filter.clientAssigned = {
+        $regex: new RegExp(`^${clientAssigned.trim()}$`, "i"),
+      };
+    }
+
+    // Fetch filtered records
+    const data = await MerchAccount.find(filter).lean();
+
+    // Format output
+    const formatted = data.map((emp, index) => ({
+      "#": index + 1,
+      Company: emp.company,
+      Client: emp.clientAssigned,
+      EmployeeNo: emp.employeeNo,
+      Fullname: `${emp.lastName}, ${emp.firstName} ${
+        emp.middleName || ""
+      }`.trim(),
+      Status: emp.status,
+      Remarks: emp.remarks,
+      Position: emp.position,
+      Contact: emp.contact,
+      Email: emp.email || "",
+      Birthday: emp.birthday ? new Date(emp.birthday).toLocaleDateString() : "",
+      DateHired: emp.dateHired
+        ? new Date(emp.dateHired).toLocaleDateString()
+        : "",
+      DateResigned: emp.dateResigned
+        ? new Date(emp.dateResigned).toLocaleDateString()
+        : "",
+      HomeAddress: emp.homeAddress,
+      ModeOfDisbursement: emp.modeOfDisbursement,
+      AccountNumber: emp.accountNumber || "",
+      CreatedBy: emp.createdBy,
+    }));
+
+    return res.send({ status: 200, data: formatted });
+  } catch (error) {
+    console.error("Export Error:", error);
+    return res.status(500).send({ error: error.message });
+  }
+});
+
 app.put("/update-employee/:id", async (req, res) => {
   try {
     const employeeId = req.params.id;
