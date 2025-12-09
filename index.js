@@ -304,7 +304,10 @@ app.post("/export-merch-accounts", async (req, res) => {
       HomeAddress: emp.homeAddress,
       ModeOfDisbursement: emp.modeOfDisbursement,
       AccountNumber: emp.accountNumber || "",
-      CreatedBy: emp.createdBy,
+      SSS: emp.sss || "",
+      PhilHealth: emp.philhealth || "",
+      HDMF: emp.hdmf || "",
+      Tin: emp.tin || "",
     }));
 
     return res.send({ status: 200, data: formatted });
@@ -434,7 +437,7 @@ app.put("/update-employee/:id", async (req, res) => {
 
 app.get("/recent-activities", async (req, res) => {
   try {
-    const activities = await RecentActivity.find().sort({ date: -1 }).limit(50); // show most recent 50
+    const activities = await RecentActivity.find().sort({ date: -1 });
 
     res.status(200).json({ data: activities });
   } catch (error) {
@@ -641,6 +644,7 @@ app.get("/get-merch-accounts-dashboard", async (req, res) => {
       lastName: 1,
       position: 1,
       dateHired: 1,
+      dateResigned: 1,
       createdBy: 1,
     });
 
@@ -669,6 +673,7 @@ app.get("/get-merch-accounts-dashboard", async (req, res) => {
       ...a._doc,
       normalizedStatus: mapStatus(a.remarks), // <-- safer
       dateHired: a.dateHired ? new Date(a.dateHired) : null,
+      dateResigned: a.dateResigned ? new Date(a.dateResigned) : null,
     }));
 
     res.status(200).json(normalizedAccounts);
