@@ -646,9 +646,10 @@ app.get("/get-merch-accounts-dashboard", async (req, res) => {
       dateHired: 1,
       dateResigned: 1,
       createdBy: 1,
+      createdAt: 1,
     });
 
-    console.log("Filter used:", filter, "Accounts found:", accounts.length);
+    // console.log("Filter used:", filter, "Accounts found:", accounts.length);
 
     const mapStatus = (remarks) => {
       if (!remarks) return "unknown";
