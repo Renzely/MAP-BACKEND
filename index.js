@@ -618,16 +618,23 @@ app.get("/get-merch-accounts-dashboard", async (req, res) => {
     const { company, clientAssigned, year } = req.query;
 
     const filter = {};
-    if (company) {
-      filter.company = { $regex: new RegExp(`^${company.trim()}$`, "i") };
+
+    // ✅ COMPANY FILTER (supports All, BMPOWER, MARABOU)
+    if (company && company !== "All") {
+      filter.company = {
+        $regex: new RegExp(`^${company.trim()}$`, "i"),
+      };
     }
+
+    // ✅ CLIENT FILTER
     if (clientAssigned) {
       filter.clientAssigned = {
         $regex: new RegExp(`^${clientAssigned.trim()}$`, "i"),
       };
     }
 
-    if (year) {
+    // ✅ YEAR FILTER (ignore "All")
+    if (year && year !== "All") {
       filter.dateHired = {
         $gte: new Date(`${year}-01-01`),
         $lte: new Date(`${year}-12-31`),
@@ -649,13 +656,12 @@ app.get("/get-merch-accounts-dashboard", async (req, res) => {
       createdAt: 1,
     });
 
-    // console.log("Filter used:", filter, "Accounts found:", accounts.length);
-
+    // ✅ Normalize remarks
     const mapStatus = (remarks) => {
       if (!remarks) return "unknown";
-      const s = remarks.toLowerCase();
-      switch (s) {
+      switch (remarks.toLowerCase()) {
         case "active":
+        case "employed":
           return "employed";
         case "resign":
           return "resign";
@@ -672,7 +678,7 @@ app.get("/get-merch-accounts-dashboard", async (req, res) => {
 
     const normalizedAccounts = accounts.map((a) => ({
       ...a._doc,
-      normalizedStatus: mapStatus(a.remarks), // <-- safer
+      remarks: mapStatus(a.remarks),
       dateHired: a.dateHired ? new Date(a.dateHired) : null,
       dateResigned: a.dateResigned ? new Date(a.dateResigned) : null,
     }));
