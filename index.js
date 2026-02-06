@@ -8,6 +8,7 @@ app.use(express.json());
 const auth = require("./auth");
 const RecentActivity = require("./recentActivity");
 const MerchAccount = require("./MerchAccount");
+const ClientProfile = require("./clientProfile");
 const bcrypt = require("bcryptjs");
 const User = require("./users");
 const AdminUser = require("./adminUsers");
@@ -61,6 +62,28 @@ app.post("/save-requirements-images", (req, res) => {
 
   const params = {
     Bucket: "mmp-portal-docs",
+    Key: fileName,
+    Expires: 60,
+    ContentType: fileType, // use the file's actual MIME type
+  };
+
+  s3.getSignedUrl("putObject", params, (err, url) => {
+    if (err) {
+      console.error("S3 Error:", err);
+      return res
+        .status(500)
+        .json({ error: "Failed to generate pre-signed URL" });
+    }
+
+    res.json({ url });
+  });
+});
+
+app.post("/save-requirements-images-client", (req, res) => {
+  const { fileName, fileType } = req.body; // get file type from frontend
+
+  const params = {
+    Bucket: "mmp-portal-docs-client",
     Key: fileName,
     Expires: 60,
     ContentType: fileType, // use the file's actual MIME type
@@ -205,7 +228,7 @@ app.put("/update-admin-status", async (req, res) => {
     const updatedUser = await AdminUser.findOneAndUpdate(
       { emailAddress },
       { $set: { isVerified: isVerified } },
-      { new: true }
+      { new: true },
     );
 
     if (!updatedUser) {
@@ -229,7 +252,7 @@ app.put("/update-admin-outlet", async (req, res) => {
     const updatedUser = await AdminUser.findOneAndUpdate(
       { emailAddress },
       { $set: { outlet } },
-      { new: true }
+      { new: true },
     );
 
     if (!updatedUser) {
@@ -337,7 +360,7 @@ app.put("/update-employee/:id", async (req, res) => {
     const result = await MerchAccount.findByIdAndUpdate(
       employeeId,
       { $set: updatedData },
-      { new: true }
+      { new: true },
     );
 
     // ✅ Readable field names for tracking
@@ -491,6 +514,232 @@ app.post("/check-duplicate-ids", async (req, res) => {
   }
 });
 
+app.put("/update-client-profile/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const updateData = req.body;
+
+    // Optional: prevent updating system fields
+    delete updateData._id;
+    delete updateData.createdAt;
+    delete updateData.createdBy;
+
+    const updatedClient = await ClientProfile.findByIdAndUpdate(
+      id,
+      {
+        ...updateData,
+        updatedAt: new Date(),
+      },
+      {
+        new: true, // return updated document
+        runValidators: true,
+      },
+    );
+
+    if (!updatedClient) {
+      return res.status(404).json({
+        message: "Client profile not found",
+      });
+    }
+
+    res.status(200).json({
+      message: "Client profile updated successfully",
+      data: updatedClient,
+    });
+  } catch (error) {
+    console.error("Update client profile error:", error);
+
+    res.status(500).json({
+      message: "Failed to update client profile",
+      error: error.message,
+    });
+  }
+});
+
+// fetch client profile
+
+app.get("/get-client-profiles", async (req, res) => {
+  try {
+    const clients = await ClientProfile.find().sort({ createdAt: -1 });
+    res.status(200).json(clients);
+  } catch (error) {
+    console.error("Error fetching client profiles:", error);
+    res.status(500).json({ message: "Failed to fetch client profiles" });
+  }
+});
+
+// ClientProfile
+
+app.post("/create-client-profile", async (req, res) => {
+  try {
+    const {
+      company,
+      businessType,
+      clientProfile,
+      clientAddress,
+      billingAddress,
+      firstName,
+      middleName,
+      lastName,
+      jobTitle,
+      primaryContact,
+      clientDepartment,
+      contact,
+      email,
+      tin,
+      paymentTerm,
+      contractSD,
+      contractED,
+      clientWebsite,
+      createdBy,
+      requirementsImages,
+    } = req.body;
+
+    // ✅ FIX 1: Proper required-field check
+    if (
+      !company ||
+      !businessType ||
+      !clientProfile ||
+      !clientAddress ||
+      !firstName ||
+      !middleName ||
+      !lastName ||
+      !jobTitle ||
+      typeof primaryContact === "undefined" || // ✅ boolean-safe
+      !clientDepartment ||
+      !contact ||
+      // !email ||
+      !tin ||
+      !contractSD ||
+      !contractED ||
+      !createdBy
+    ) {
+      return res.status(400).json({ message: "Missing required fields" });
+    }
+
+    // ✅ FIX 2: Convert primaryContact safely
+    const isPrimaryContact =
+      primaryContact === true ||
+      primaryContact === "true" ||
+      primaryContact === "Primary";
+
+    // ✅ CONTACT FORMAT
+    if (!/^[0-9]{11}$/.test(contact)) {
+      return res.status(400).json({
+        message: "Contact number must be exactly 11 digits",
+      });
+    }
+
+    // ✅ TIN FORMAT
+    if (!/^[0-9]{12}$/.test(tin)) {
+      return res.status(400).json({
+        message: "TIN must be exactly 12 digits",
+      });
+    }
+
+    // ✅ CONTRACT DATE VALIDATION
+    if (new Date(contractED) < new Date(contractSD)) {
+      return res.status(400).json({
+        message: "Contract end date must be after start date",
+      });
+    }
+
+    // ✅ DUPLICATE CHECKS
+    const duplicateFields = [];
+    const fieldsToCheck = { tin, email, contact };
+
+    for (const [key, value] of Object.entries(fieldsToCheck)) {
+      if (value?.trim()) {
+        const exists = await ClientProfile.findOne({ [key]: value });
+        if (exists) duplicateFields.push(key.toUpperCase());
+      }
+    }
+
+    if (duplicateFields.length > 0) {
+      return res.status(409).json({
+        message: `Duplicate found in: ${duplicateFields.join(", ")}`,
+      });
+    }
+
+    // ✅ CREATE CLIENT PROFILE
+    const newClientProfile = new ClientProfile({
+      company,
+      businessType,
+      clientProfile,
+      clientAddress,
+      billingAddress: billingAddress || "",
+      firstName,
+      middleName,
+      lastName,
+      jobTitle,
+      primaryContact: isPrimaryContact, // ✅ FIXED
+      clientDepartment,
+      contact,
+      email: email.trim(),
+      tin: tin.trim(),
+      paymentTerm,
+      contractSD,
+      contractED,
+      clientWebsite: clientWebsite || "",
+      requirementsImages: requirementsImages || [],
+      createdBy,
+      status: "Active",
+    });
+
+    await newClientProfile.save();
+
+    return res.status(200).json({
+      message: "Client profile created successfully",
+      data: newClientProfile,
+    });
+  } catch (error) {
+    console.error("Error creating client profile:", error);
+
+    if (error.code === 11000) {
+      const dupField = Object.keys(error.keyPattern)[0].toUpperCase();
+      return res.status(409).json({
+        message: `Duplicate found in: ${dupField}`,
+      });
+    }
+
+    return res.status(500).json({ message: "Internal server error" });
+  }
+});
+
+app.get("/get-employee-counts-by-client", async (req, res) => {
+  try {
+    const counts = await MerchAccount.aggregate([
+      {
+        $match: {
+          status: "Active",
+        },
+      },
+      {
+        $group: {
+          _id: {
+            company: "$company",
+            clientAssigned: "$clientAssigned",
+          },
+          employeeCount: { $sum: 1 },
+        },
+      },
+      {
+        $project: {
+          _id: 0,
+          company: "$_id.company",
+          clientAssigned: "$_id.clientAssigned",
+          employeeCount: 1,
+        },
+      },
+    ]);
+
+    res.status(200).json(counts);
+  } catch (error) {
+    console.error("Error fetching employee counts:", error);
+    res.status(500).json({ message: "Failed to fetch employee counts" });
+  }
+});
+
 app.post("/create-merch-account", async (req, res) => {
   try {
     const {
@@ -517,31 +766,72 @@ app.post("/create-merch-account", async (req, res) => {
       homeAddress,
       silBalance,
       clientAssigned,
+      // NEXT WEEK UPDATE
+      // outlet,
       requirementsImages,
       createdBy,
     } = req.body;
 
-    // ✅ Check required fields (excluding optional ones)
-    if (
-      !company ||
-      !status ||
-      !remarks ||
-      !employeeNo ||
-      !firstName ||
-      !lastName ||
-      !modeOfDisbursement ||
-      !contact ||
-      !birthday ||
-      !position ||
-      !dateHired ||
-      !homeAddress ||
-      !clientAssigned ||
-      !silBalance
-    ) {
+    const isApplicant = status === "Applicant";
+
+    /* ---------------- REQUIRED FIELD VALIDATION ---------------- */
+
+    if (!company || !status || !remarks || !firstName || !lastName) {
       return res.status(400).json({ message: "Missing required fields" });
     }
 
-    // ✅ Check duplicates only for non-empty optional fields
+    if (isApplicant) {
+      // Applicant-specific required fields
+      if (
+        !contact ||
+        !birthday ||
+        !position ||
+        !homeAddress ||
+        !clientAssigned
+      ) {
+        return res
+          .status(400)
+          .json({ message: "Missing required Applicant fields" });
+      }
+    } else {
+      // Employee required fields
+      if (
+        !employeeNo ||
+        !modeOfDisbursement ||
+        !contact ||
+        !birthday ||
+        !position ||
+        !dateHired ||
+        !homeAddress ||
+        !clientAssigned ||
+        silBalance === undefined
+      ) {
+        return res
+          .status(400)
+          .json({ message: "Missing required Employee fields" });
+      }
+    }
+
+    // 🆕 Validate outlet for ECOSSENTIAL FOODS CORP and SPX EXPRESS
+    // if (
+    //   (clientAssigned === "ECOSSENTIAL FOODS CORP" ||
+    //     clientAssigned === "SPX EXPRESS") &&
+    //   (!outlet || outlet.trim() === "")
+    // ) {
+    //   return res.status(400).json({
+    //     message:
+    //       clientAssigned === "ECOSSENTIAL FOODS CORP"
+    //         ? "Outlet is required for ECOSSENTIAL FOODS CORP"
+    //         : "Hub is required for SPX EXPRESS",
+    //   });
+    // }
+
+    if (!createdBy) {
+      return res.status(400).json({ message: "Missing admin creator info" });
+    }
+
+    /* ---------------- DUPLICATE CHECKS ---------------- */
+
     const duplicateFields = [];
     const optionalFields = { email, sss, philhealth, hdmf, tin };
 
@@ -554,28 +844,27 @@ app.post("/create-merch-account", async (req, res) => {
 
     if (duplicateFields.length > 0) {
       return res.status(409).json({
-        message: `Duplicate found in: ${duplicateFields.join(", ")}.`,
+        message: `Duplicate found in: ${duplicateFields.join(", ")}`,
       });
     }
 
-    if (!createdBy) {
-      return res.status(400).json({ message: "Missing admin creator info" });
-    }
+    /* ---------------- CREATE ACCOUNT ---------------- */
 
-    // ✅ Prepare new account data
     const newAccount = new MerchAccount({
       company,
       status,
       remarks,
-      employeeNo,
+      employeeNo: isApplicant ? null : employeeNo,
       firstName,
       middleName,
       lastName,
-      modeOfDisbursement,
+      modeOfDisbursement: isApplicant ? null : modeOfDisbursement,
       accountNumber:
-        modeOfDisbursement === "TBA" || !accountNumber ? null : accountNumber,
+        isApplicant || modeOfDisbursement === "TBA" || !accountNumber
+          ? null
+          : accountNumber,
       contact,
-      email: email?.trim() || undefined, // undefined avoids MongoDB duplicate key error
+      email: email?.trim() || undefined,
       birthday,
       age: age || null,
       sss: sss?.trim() || undefined,
@@ -583,25 +872,25 @@ app.post("/create-merch-account", async (req, res) => {
       hdmf: hdmf?.trim() || undefined,
       tin: tin?.trim() || undefined,
       position,
-      dateHired,
+      dateHired: isApplicant ? null : dateHired,
       dateResigned,
       homeAddress,
-      silBalance,
+      silBalance: isApplicant ? null : silBalance,
       clientAssigned,
+      // outlet: outlet?.trim() || undefined,
       requirementsImages: requirementsImages || [],
       createdBy,
     });
 
-    // ✅ Save account
     await newAccount.save();
 
-    return res
-      .status(200)
-      .json({ message: "Account created successfully", data: newAccount });
+    return res.status(200).json({
+      message: "Account created successfully",
+      data: newAccount,
+    });
   } catch (error) {
     console.error("Error creating merch account:", error);
 
-    // Handle MongoDB duplicate key error for safety
     if (error.code === 11000) {
       const dupField = Object.keys(error.keyPattern)[0].toUpperCase();
       return res.status(409).json({
@@ -719,7 +1008,7 @@ app.get("/get-merch-accounts", async (req, res) => {
         silBalance: 1,
         clientAssigned: 1,
         requirementsImages: 1, // ✅ include photo field
-      }
+      },
     );
 
     res.status(200).json(accounts);
@@ -745,7 +1034,7 @@ app.put("/update-user-status", async (req, res) => {
     const result = await User.findOneAndUpdate(
       { email: email },
       { $set: { isVerified: isVerified } },
-      { new: true }
+      { new: true },
     );
 
     if (!result) {
@@ -777,7 +1066,7 @@ app.put("/update-user-branch", async (req, res) => {
     const updatedUser = await User.findOneAndUpdate(
       { email },
       { $set: { outlet } }, // No need to join, just save the array
-      { new: true }
+      { new: true },
     );
 
     if (!updatedUser) {
@@ -798,39 +1087,65 @@ app.post("/login-admin", async (req, res) => {
   const { emailAddress, password } = req.body;
 
   try {
-    const user = await AdminUser.findOne({ emailAddress });
-
-    if (!user) {
-      return res.status(401).json({
-        status: 401,
-        data: "Email address not found",
+    // 🔹 1. Validate required fields
+    if (!emailAddress && !password) {
+      return res.status(400).json({
+        status: 400,
+        message: "Email address and password are required",
       });
     }
 
+    if (!emailAddress) {
+      return res.status(400).json({
+        status: 400,
+        message: "Email address is required",
+      });
+    }
+
+    if (!password) {
+      return res.status(400).json({
+        status: 400,
+        message: "Password is required",
+      });
+    }
+
+    // 🔹 2. Check if email exists
+    const user = await AdminUser.findOne({ emailAddress });
+
+    if (!user) {
+      return res.status(404).json({
+        status: 404,
+        message: "Email address does not exist",
+      });
+    }
+
+    // 🔹 3. Validate password
     const isPasswordValid = await bcrypt.compare(password, user.password);
 
     if (!isPasswordValid) {
       return res.status(401).json({
         status: 401,
-        data: "Incorrect password",
+        message: "Incorrect password",
       });
     }
 
-    // Login success
+    // 🔹 4. Login success
     return res.status(200).json({
       status: 200,
+      message: "Login successful",
       data: {
         firstName: user.firstName,
         lastName: user.lastName,
         roleAccount: user.roleAccount,
         outlet: user.outlet,
+        emailAddress: user.emailAddress,
       },
     });
   } catch (error) {
     console.error("Login error:", error);
     return res.status(500).json({
       status: 500,
-      data: "Internal server error",
+      message: "Internal server error",
     });
   }
 });
@@ -880,7 +1195,7 @@ app.post("/signup", async (req, res) => {
   await sendEmail(
     email,
     "Your OTP Code",
-    `Your OTP is ${otp}. It will expire in 5 minutes.`
+    `Your OTP is ${otp}. It will expire in 5 minutes.`,
   );
 
   res.status(201).json({ message: "User registered. OTP sent to email." });
@@ -938,7 +1253,7 @@ app.put("/forgot-password-reset", async (req, res) => {
   try {
     await AdminUser.findOneAndUpdate(
       { emailAddress: emailAddress },
-      { $set: { password: encryptedPassword } }
+      { $set: { password: encryptedPassword } },
     );
     res.send({ status: 200, data: "Password updated" });
   } catch (error) {
@@ -1099,7 +1414,7 @@ app.post("/login", async (req, res) => {
             role: user.role,
           },
         });
-      }
+      },
     );
   } catch (err) {
     console.error(err.message);
