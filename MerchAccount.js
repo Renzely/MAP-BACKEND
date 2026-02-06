@@ -5,12 +5,26 @@ const merchAccountSchema = new mongoose.Schema(
     company: { type: String, required: true },
     status: { type: String, required: true },
     remarks: { type: String, required: true },
-    employeeNo: { type: String, required: true },
+    employeeNo: {
+      type: String,
+      required: function () {
+        return this.status !== "Applicant";
+      },
+    },
+
     firstName: { type: String, required: true },
     middleName: { type: String },
     lastName: { type: String, required: true },
-    modeOfDisbursement: { type: String, required: true },
-    accountNumber: { type: String, required: false },
+    modeOfDisbursement: {
+      type: String,
+      required: function () {
+        return this.status !== "Applicant";
+      },
+    },
+    accountNumber: {
+      type: String,
+      default: null,
+    },
     contact: { type: String, required: true },
     email: {
       type: String,
@@ -31,11 +45,35 @@ const merchAccountSchema = new mongoose.Schema(
     hdmf: { type: String },
     tin: { type: String },
     position: { type: String, required: true },
-    dateHired: { type: Date, required: true },
+    dateHired: {
+      type: Date,
+      required: function () {
+        return this.status !== "Applicant";
+      },
+    },
     dateResigned: { type: Date },
     homeAddress: { type: String, required: true },
-    silBalance: { type: String },
+    silBalance: {
+      type: Number,
+      required: function () {
+        return this.status !== "Applicant";
+      },
+    },
+
     clientAssigned: { type: String, required: true },
+
+    // NEXT WEEK UPDATE FOR OUTLETS!
+
+    // outlet: {
+    //   type: String,
+    //   required: function () {
+    //     // Required only for ECOSSENTIAL FOODS CORP and SPX EXPRESS
+    //     return (
+    //       this.clientAssigned === "ECOSSENTIAL FOODS CORP" ||
+    //       this.clientAssigned === "SPX EXPRESS"
+    //     );
+    //   },
+    // },
 
     // 🆕 Add this line to store S3 image URL
     requirementsImages: [{ type: String }],
@@ -45,7 +83,7 @@ const merchAccountSchema = new mongoose.Schema(
       required: true,
     },
   },
-  { timestamps: true }
+  { timestamps: true },
 );
 
 const MerchAccount = mongoose.model("MerchAccount", merchAccountSchema);
