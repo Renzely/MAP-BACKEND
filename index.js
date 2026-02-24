@@ -320,6 +320,7 @@ app.post("/export-merch-accounts", async (req, res) => {
       Contact: emp.contact,
       Email: emp.email || "",
       Birthday: emp.birthday ? new Date(emp.birthday).toLocaleDateString() : "",
+      Age: emp.age,
       DateHired: emp.dateHired
         ? new Date(emp.dateHired).toLocaleDateString()
         : "",
