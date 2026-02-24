@@ -816,18 +816,18 @@ app.post("/create-merch-account", async (req, res) => {
     }
 
     // 🆕 Validate outlet for ECOSSENTIAL FOODS CORP and SPX EXPRESS
-    if (
-      (clientAssigned === "ECOSSENTIAL FOODS CORP" ||
-        clientAssigned === "SPX EXPRESS") &&
-      (!outlet || outlet.trim() === "")
-    ) {
+    // 🆕 Only require outlet/hub for SPX for now
+    if (clientAssigned === "SPX EXPRESS" && (!outlet || outlet.trim() === "")) {
       return res.status(400).json({
-        message:
-          clientAssigned === "ECOSSENTIAL FOODS CORP"
-            ? "Outlet is required for ECOSSENTIAL FOODS CORP"
-            : "Hub is required for SPX EXPRESS",
+        message: "Hub is required for SPX EXPRESS",
       });
     }
+
+    // Optional for EFC and others
+    // if needed later, uncomment for next update
+    // if (clientAssigned === "ECOSSENTIAL FOODS CORP" && (!outlet || outlet.trim() === "")) {
+    //   return res.status(400).json({ message: "Outlet is required for ECOSSENTIAL FOODS CORP" });
+    // }
 
     if (!createdBy) {
       return res.status(400).json({ message: "Missing admin creator info" });
