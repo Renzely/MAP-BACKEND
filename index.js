@@ -305,7 +305,7 @@ app.post("/export-merch-accounts", async (req, res) => {
 
     // Format output
     const formatted = data.map((emp, index) => ({
-      "#": index + 1,
+      // "#": index + 1,
       Company: emp.company,
       Client: emp.clientAssigned,
       EmployeeNo: emp.employeeNo,
@@ -315,6 +315,8 @@ app.post("/export-merch-accounts", async (req, res) => {
       Status: emp.status,
       Remarks: emp.remarks,
       Position: emp.position,
+      Region: emp.region || "",
+      Outlet: emp.outlet || "",
       Contact: emp.contact,
       Email: emp.email || "",
       Birthday: emp.birthday ? new Date(emp.birthday).toLocaleDateString() : "",
@@ -766,8 +768,8 @@ app.post("/create-merch-account", async (req, res) => {
       homeAddress,
       silBalance,
       clientAssigned,
-      // NEXT WEEK UPDATE
-      // outlet,
+      outlet,
+      region,
       requirementsImages,
       createdBy,
     } = req.body;
@@ -813,18 +815,18 @@ app.post("/create-merch-account", async (req, res) => {
     }
 
     // 🆕 Validate outlet for ECOSSENTIAL FOODS CORP and SPX EXPRESS
-    // if (
-    //   (clientAssigned === "ECOSSENTIAL FOODS CORP" ||
-    //     clientAssigned === "SPX EXPRESS") &&
-    //   (!outlet || outlet.trim() === "")
-    // ) {
-    //   return res.status(400).json({
-    //     message:
-    //       clientAssigned === "ECOSSENTIAL FOODS CORP"
-    //         ? "Outlet is required for ECOSSENTIAL FOODS CORP"
-    //         : "Hub is required for SPX EXPRESS",
-    //   });
-    // }
+    if (
+      (clientAssigned === "ECOSSENTIAL FOODS CORP" ||
+        clientAssigned === "SPX EXPRESS") &&
+      (!outlet || outlet.trim() === "")
+    ) {
+      return res.status(400).json({
+        message:
+          clientAssigned === "ECOSSENTIAL FOODS CORP"
+            ? "Outlet is required for ECOSSENTIAL FOODS CORP"
+            : "Hub is required for SPX EXPRESS",
+      });
+    }
 
     if (!createdBy) {
       return res.status(400).json({ message: "Missing admin creator info" });
@@ -877,7 +879,8 @@ app.post("/create-merch-account", async (req, res) => {
       homeAddress,
       silBalance: isApplicant ? null : silBalance,
       clientAssigned,
-      // outlet: outlet?.trim() || undefined,
+      outlet: outlet?.trim() || undefined,
+      region: region?.trim() || undefined,
       requirementsImages: requirementsImages || [],
       createdBy,
     });
@@ -1007,6 +1010,8 @@ app.get("/get-merch-accounts", async (req, res) => {
         homeAddress: 1,
         silBalance: 1,
         clientAssigned: 1,
+        region: 1,
+        outlet: 1,
         requirementsImages: 1, // ✅ include photo field
       },
     );

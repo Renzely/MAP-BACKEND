@@ -62,18 +62,27 @@ const merchAccountSchema = new mongoose.Schema(
 
     clientAssigned: { type: String, required: true },
 
-    // NEXT WEEK UPDATE FOR OUTLETS!
+    region: {
+      type: String,
+      required: function () {
+        const client = this.clientAssigned?.toUpperCase();
+        return (
+          // client === "ECOSSENTIAL FOODS CORP" ||
+          client === "SPX EXPRESS"
+        );
+      },
+    },
 
-    // outlet: {
-    //   type: String,
-    //   required: function () {
-    //     // Required only for ECOSSENTIAL FOODS CORP and SPX EXPRESS
-    //     return (
-    //       this.clientAssigned === "ECOSSENTIAL FOODS CORP" ||
-    //       this.clientAssigned === "SPX EXPRESS"
-    //     );
-    //   },
-    // },
+    outlet: {
+      type: String,
+      required: function () {
+        const client = this.clientAssigned?.toUpperCase();
+        return (
+          // client === "ECOSSENTIAL FOODS CORP" ||
+          client === "SPX EXPRESS"
+        );
+      },
+    },
 
     // 🆕 Add this line to store S3 image URL
     requirementsImages: [{ type: String }],
