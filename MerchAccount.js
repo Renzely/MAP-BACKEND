@@ -84,6 +84,39 @@ const merchAccountSchema = new mongoose.Schema(
       },
     },
 
+    account: {
+      type: String,
+      default: null,
+    },
+
+    outletAssigned: {
+      type: String,
+      default: null,
+    },
+
+    outletsAssigned: [{ type: String }],
+
+    outletStatusMap: {
+      type: Map,
+      of: String,
+      default: {},
+    },
+
+    deployStatus: {
+      type: String,
+      enum: ["Deployed", "Undeployed"],
+      default: "Undeployed",
+    },
+
+    outletAssignmentHistory: [
+      {
+        outletName: { type: String },
+        deployStatus: { type: String },
+        updatedBy: { type: String },
+        updatedAt: { type: Date, default: Date.now },
+      },
+    ],
+
     // 🆕 Add this line to store S3 image URL
     requirementsImages: [{ type: String }],
 
@@ -92,6 +125,7 @@ const merchAccountSchema = new mongoose.Schema(
       required: true,
     },
   },
+
   { timestamps: true },
 );
 
