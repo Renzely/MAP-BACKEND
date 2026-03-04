@@ -26,6 +26,8 @@ const timezone = require("dayjs/plugin/timezone");
 dayjs.extend(utc);
 dayjs.extend(timezone);
 
+const TZ = "Asia/Manila";
+
 function parsePhilippineDateTimeAlternative(dateStr, timeStr) {
   const dateTimeStr = `${dateStr} ${timeStr}`;
 
@@ -319,13 +321,16 @@ app.post("/export-merch-accounts", async (req, res) => {
       Outlet: emp.outlet || "",
       Contact: emp.contact,
       Email: emp.email || "",
-      Birthday: emp.birthday ? new Date(emp.birthday).toLocaleDateString() : "",
+      Birthday: emp.birthday
+        ? dayjs(emp.birthday).tz(TZ).format("MM/DD/YYYY")
+        : "",
       Age: emp.age,
       DateHired: emp.dateHired
-        ? new Date(emp.dateHired).toLocaleDateString()
+        ? dayjs(emp.dateHired).tz(TZ).format("MM/DD/YYYY")
         : "",
+
       DateResigned: emp.dateResigned
-        ? new Date(emp.dateResigned).toLocaleDateString()
+        ? dayjs(emp.dateResigned).tz(TZ).format("MM/DD/YYYY")
         : "",
       HomeAddress: emp.homeAddress,
       ModeOfDisbursement: emp.modeOfDisbursement,
@@ -906,6 +911,163 @@ app.post("/create-merch-account", async (req, res) => {
   }
 });
 
+app.put("/assign-outlet", async (req, res) => {
+  try {
+    const { outletName, employeeId, deployStatus, updatedBy } = req.body;
+
+    if (!outletName || !deployStatus) {
+      return res.status(400).json({
+        success: false,
+        message: "outletName and deployStatus are required.",
+      });
+    }
+
+    // ── If clearing — remove this outlet from whoever has it ─────────────────
+    if (!employeeId) {
+      await MerchAccount.updateMany(
+        {
+          clientAssigned: { $regex: /ECOSSENTIAL FOODS CORP$/i },
+          outletsAssigned: outletName,
+        },
+        { $pull: { outletsAssigned: outletName } },
+      );
+      return res
+        .status(200)
+        .json({ success: true, message: "Outlet assignment cleared." });
+    }
+
+    // ── Remove this outlet from any OTHER merchandiser who has it ─────────────
+    await MerchAccount.updateMany(
+      {
+        clientAssigned: { $regex: /ECOSSENTIAL FOODS CORP$/i },
+        outletsAssigned: outletName,
+        _id: { $ne: employeeId },
+      },
+      { $pull: { outletsAssigned: outletName } },
+    );
+
+    // ── Add outlet to selected merchandiser (no duplicates) ───────────────────
+    const updated = await MerchAccount.findByIdAndUpdate(
+      employeeId,
+      {
+        $addToSet: { outletsAssigned: outletName },
+        $set: { deployStatus },
+        $push: {
+          outletAssignmentHistory: {
+            outletName,
+            deployStatus,
+            updatedBy: updatedBy || "Unknown",
+            updatedAt: new Date(),
+          },
+        },
+      },
+      { new: true, runValidators: false },
+    );
+
+    if (!updated)
+      return res
+        .status(404)
+        .json({ success: false, message: "Employee not found." });
+
+    return res.status(200).json({
+      success: true,
+      message: "Outlet assignment saved.",
+      data: updated,
+    });
+  } catch (error) {
+    console.error("Error in /assign-outlet:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Internal server error.",
+      error: error.message,
+    });
+  }
+});
+
+app.put("/assign-coordinator", async (req, res) => {
+  try {
+    const { outletName, employeeId, deployStatus, updatedBy } = req.body;
+
+    if (!outletName || !deployStatus) {
+      return res
+        .status(400)
+        .json({
+          success: false,
+          message: "outletName and deployStatus are required.",
+        });
+    }
+
+    if (!employeeId) {
+      await MerchAccount.updateMany(
+        {
+          clientAssigned: { $regex: /ECOSSENTIAL FOODS CORP-COORDINATORS/i },
+          outletsAssigned: outletName,
+        },
+        {
+          $pull: { outletsAssigned: outletName },
+          $unset: { [`outletStatusMap.${outletName.replace(/\./g, "_")}`]: "" },
+        },
+      );
+      return res
+        .status(200)
+        .json({ success: true, message: "Coordinator assignment cleared." });
+    }
+
+    // ── Remove outlet from any OTHER coordinator ───────────────────────────────
+    await MerchAccount.updateMany(
+      {
+        clientAssigned: { $regex: /ECOSSENTIAL FOODS CORP-COORDINATORS/i },
+        outletsAssigned: outletName,
+        _id: { $ne: employeeId },
+      },
+      { $pull: { outletsAssigned: outletName } },
+    );
+
+    // ── Save outlet + per-outlet status ───────────────────────────────────────
+    // Use a safe key (dots not allowed in MongoDB keys)
+    const safeKey = outletName.replace(/\./g, "_");
+
+    const updated = await MerchAccount.findByIdAndUpdate(
+      employeeId,
+      {
+        $addToSet: { outletsAssigned: outletName },
+        $set: { [`outletStatusMap.${safeKey}`]: deployStatus },
+        $push: {
+          outletAssignmentHistory: {
+            outletName,
+            deployStatus,
+            updatedBy: updatedBy || "Unknown",
+            updatedAt: new Date(),
+          },
+        },
+      },
+      { new: true, runValidators: false },
+    );
+
+    if (!updated)
+      return res
+        .status(404)
+        .json({ success: false, message: "Coordinator not found." });
+
+    return res
+      .status(200)
+      .json({
+        success: true,
+        message: "Coordinator assignment saved.",
+        data: updated,
+      });
+  } catch (error) {
+    console.error("Error in /assign-coordinator:", error);
+    return res
+      .status(500)
+      .json({
+        success: false,
+        message: "Internal server error.",
+        error: error.message,
+      });
+  }
+});
+
 app.get("/get-merch-accounts-dashboard", async (req, res) => {
   try {
     const { company, clientAssigned, year } = req.query;
@@ -1013,6 +1175,9 @@ app.get("/get-merch-accounts", async (req, res) => {
         clientAssigned: 1,
         region: 1,
         outlet: 1,
+        outletAssigned: 1,
+        outletsAssigned: 1,
+        deployStatus: 1,
         requirementsImages: 1, // ✅ include photo field
       },
     );
