@@ -804,7 +804,7 @@ app.post("/create-merch-account", async (req, res) => {
     } else {
       // Employee required fields
       if (
-        !employeeNo ||
+        // !employeeNo ||
         !modeOfDisbursement ||
         !contact ||
         !birthday ||
@@ -989,12 +989,10 @@ app.put("/assign-coordinator", async (req, res) => {
     const { outletName, employeeId, deployStatus, updatedBy } = req.body;
 
     if (!outletName || !deployStatus) {
-      return res
-        .status(400)
-        .json({
-          success: false,
-          message: "outletName and deployStatus are required.",
-        });
+      return res.status(400).json({
+        success: false,
+        message: "outletName and deployStatus are required.",
+      });
     }
 
     if (!employeeId) {
@@ -1049,22 +1047,18 @@ app.put("/assign-coordinator", async (req, res) => {
         .status(404)
         .json({ success: false, message: "Coordinator not found." });
 
-    return res
-      .status(200)
-      .json({
-        success: true,
-        message: "Coordinator assignment saved.",
-        data: updated,
-      });
+    return res.status(200).json({
+      success: true,
+      message: "Coordinator assignment saved.",
+      data: updated,
+    });
   } catch (error) {
     console.error("Error in /assign-coordinator:", error);
-    return res
-      .status(500)
-      .json({
-        success: false,
-        message: "Internal server error.",
-        error: error.message,
-      });
+    return res.status(500).json({
+      success: false,
+      message: "Internal server error.",
+      error: error.message,
+    });
   }
 });
 
