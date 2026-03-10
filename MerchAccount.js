@@ -7,9 +7,8 @@ const merchAccountSchema = new mongoose.Schema(
     remarks: { type: String, required: true },
     employeeNo: {
       type: String,
-      required: function () {
-        return this.status !== "Applicant";
-      },
+      required: false,
+      default: null,
     },
 
     firstName: { type: String, required: true },
