@@ -913,7 +913,16 @@ app.post("/create-merch-account", async (req, res) => {
 
 app.put("/assign-outlet", async (req, res) => {
   try {
-    const { outletName, employeeId, deployStatus, updatedBy } = req.body;
+    const mongoose = require("mongoose");
+    const {
+      outletName,
+      employeeId,
+      deployStatus,
+      deployDate,
+      undeployDate,
+      applicantStatus,
+      updatedBy,
+    } = req.body;
 
     if (!outletName || !deployStatus) {
       return res.status(400).json({
@@ -922,11 +931,10 @@ app.put("/assign-outlet", async (req, res) => {
       });
     }
 
-    // ── If clearing — remove this outlet from whoever has it ─────────────────
     if (!employeeId) {
-      await MerchAccount.updateMany(
+      await MerchAccount.collection.updateMany(
         {
-          clientAssigned: { $regex: /ECOSSENTIAL FOODS CORP$/i },
+          clientAssigned: { $regex: /ECOSSENTIAL FOODS CORP/i },
           outletsAssigned: outletName,
         },
         { $pull: { outletsAssigned: outletName } },
@@ -936,46 +944,173 @@ app.put("/assign-outlet", async (req, res) => {
         .json({ success: true, message: "Outlet assignment cleared." });
     }
 
-    // ── Remove this outlet from any OTHER merchandiser who has it ─────────────
-    await MerchAccount.updateMany(
+    let empObjectId;
+    try {
+      empObjectId = new mongoose.Types.ObjectId(employeeId);
+    } catch (e) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Invalid employeeId format." });
+    }
+
+    // ── Step 1: Remove outlet from any OTHER employee ─────────────────────────
+    await MerchAccount.collection.updateMany(
       {
-        clientAssigned: { $regex: /ECOSSENTIAL FOODS CORP$/i },
+        clientAssigned: { $regex: /ECOSSENTIAL FOODS CORP/i },
         outletsAssigned: outletName,
-        _id: { $ne: employeeId },
+        _id: { $ne: empObjectId },
       },
       { $pull: { outletsAssigned: outletName } },
     );
 
-    // ── Add outlet to selected merchandiser (no duplicates) ───────────────────
-    const updated = await MerchAccount.findByIdAndUpdate(
-      employeeId,
+    // ── Step 2: Get current outletsAssigned for this employee ─────────────────
+    const currentDoc = await MerchAccount.collection.findOne({
+      _id: empObjectId,
+    });
+    if (!currentDoc) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Employee not found." });
+    }
+
+    // ── Step 3: Build the new outletsAssigned array manually ─────────────────
+    const existingOutlets = Array.isArray(currentDoc.outletsAssigned)
+      ? currentDoc.outletsAssigned.filter(Boolean) // remove nulls/empty
+      : [];
+    const newOutletsAssigned = existingOutlets.includes(outletName)
+      ? existingOutlets
+      : [...existingOutlets, outletName];
+
+    // ── Step 4: Build $set fields ─────────────────────────────────────────────
+    const setFields = {
+      deployStatus,
+      outletsAssigned: newOutletsAssigned, // ← FORCE SET the full array
+      updatedAt: new Date(),
+    };
+
+    if (deployStatus === "Deployed") {
+      setFields.applicantStatus = "";
+      setFields.undeployDate = null;
+      if (deployDate) setFields.deployDate = new Date(deployDate);
+    } else {
+      setFields.applicantStatus = applicantStatus || "";
+      setFields.deployDate = null;
+      if (undeployDate) setFields.undeployDate = new Date(undeployDate);
+    }
+
+    const historyEntry = {
+      _id: new mongoose.Types.ObjectId(),
+      outletName,
+      deployStatus,
+      deployDate: deployDate ? new Date(deployDate) : null,
+      undeployDate: undeployDate ? new Date(undeployDate) : null,
+      applicantStatus: applicantStatus || "",
+      updatedBy: updatedBy || "Unknown",
+      updatedAt: new Date(),
+    };
+
+    // ── Step 5: Update using $set for everything including outletsAssigned ────
+    const updateResult = await MerchAccount.collection.updateOne(
+      { _id: empObjectId },
       {
-        $addToSet: { outletsAssigned: outletName },
-        $set: { deployStatus },
+        $set: setFields,
+        $push: { outletAssignmentHistory: historyEntry },
+      },
+    );
+
+    // ── Step 6: Verify what was actually saved ────────────────────────────────
+    const verified = await MerchAccount.collection.findOne({
+      _id: empObjectId,
+    });
+    return res.status(200).json({
+      success: true,
+      message: "Outlet assignment saved.",
+      data: verified,
+    });
+  } catch (error) {
+    console.error("Error in /assign-outlet:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Internal server error.",
+      error: error.message,
+    });
+  }
+});
+
+// ── PUT /promote-applicant ────────────────────────────────────────────────────
+// Called when applicantStatus is set to "Onboarded"
+// Promotes the employee record: status → "Active", remarks → "Employed"
+app.put("/promote-applicant", async (req, res) => {
+  try {
+    const mongoose = require("mongoose");
+    const { employeeId, updatedBy } = req.body;
+
+    if (!employeeId) {
+      return res
+        .status(400)
+        .json({ success: false, message: "employeeId is required." });
+    }
+
+    let empObjectId;
+    try {
+      empObjectId = new mongoose.Types.ObjectId(employeeId);
+    } catch (e) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Invalid employeeId format." });
+    }
+
+    // Only promote if they are currently an Applicant
+    const doc = await MerchAccount.collection.findOne({ _id: empObjectId });
+    if (!doc) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Employee not found." });
+    }
+
+    if (doc.status?.toLowerCase() !== "applicant") {
+      return res.status(200).json({
+        success: true,
+        message: "Employee is already Active — no promotion needed.",
+        data: doc,
+      });
+    }
+
+    const updateResult = await MerchAccount.collection.updateOne(
+      { _id: empObjectId },
+      {
+        $set: {
+          status: "Active",
+          remarks: "Employed",
+          updatedAt: new Date(),
+        },
         $push: {
           outletAssignmentHistory: {
-            outletName,
-            deployStatus,
+            _id: new mongoose.Types.ObjectId(),
+            outletName: doc.outletsAssigned?.[0] || "",
+            deployStatus: "Undeployed",
+            applicantStatus: "Onboarded",
+            note: "Promoted from Applicant to Employed",
             updatedBy: updatedBy || "Unknown",
             updatedAt: new Date(),
           },
         },
       },
-      { new: true, runValidators: false },
     );
 
-    if (!updated)
-      return res
-        .status(404)
-        .json({ success: false, message: "Employee not found." });
+    console.log(
+      `[promote-applicant] ${doc.firstName} ${doc.lastName} promoted to Active/Employed`,
+    );
+
+    const updated = await MerchAccount.collection.findOne({ _id: empObjectId });
 
     return res.status(200).json({
       success: true,
-      message: "Outlet assignment saved.",
+      message: `${doc.firstName} ${doc.lastName} has been promoted to Active / Employed.`,
       data: updated,
     });
   } catch (error) {
-    console.error("Error in /assign-outlet:", error);
+    console.error("Error in /promote-applicant:", error);
     return res.status(500).json({
       success: false,
       message: "Internal server error.",
@@ -998,7 +1133,7 @@ app.put("/assign-coordinator", async (req, res) => {
     if (!employeeId) {
       await MerchAccount.updateMany(
         {
-          clientAssigned: { $regex: /ECOSSENTIAL FOODS CORP-COORDINATORS/i },
+          clientAssigned: { $regex: /ECOSSENTIAL FOODS CORP/i },
           outletsAssigned: outletName,
         },
         {
@@ -1014,7 +1149,7 @@ app.put("/assign-coordinator", async (req, res) => {
     // ── Remove outlet from any OTHER coordinator ───────────────────────────────
     await MerchAccount.updateMany(
       {
-        clientAssigned: { $regex: /ECOSSENTIAL FOODS CORP-COORDINATORS/i },
+        clientAssigned: { $regex: /ECOSSENTIAL FOODS CORP/i },
         outletsAssigned: outletName,
         _id: { $ne: employeeId },
       },
@@ -1103,6 +1238,7 @@ app.get("/get-merch-accounts-dashboard", async (req, res) => {
       dateResigned: 1,
       createdBy: 1,
       createdAt: 1,
+      outletsAssigned: 1,
     });
 
     // ✅ Normalize remarks
@@ -1171,8 +1307,13 @@ app.get("/get-merch-accounts", async (req, res) => {
         outlet: 1,
         outletAssigned: 1,
         outletsAssigned: 1,
+        outletStatusMap: 1,
         deployStatus: 1,
-        requirementsImages: 1, // ✅ include photo field
+        deployDate: 1,
+        undeployDate: 1,
+        applicantStatus: 1,
+        outletAssignmentHistory: 1,
+        requirementsImages: 1,
       },
     );
 

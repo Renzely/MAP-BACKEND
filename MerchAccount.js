@@ -107,12 +107,18 @@ const merchAccountSchema = new mongoose.Schema(
       default: "Undeployed",
     },
 
+    deployDate: { type: Date, default: null },
+    undeployDate: { type: Date, default: null },
+    applicantStatus: { type: String, default: "" },
     outletAssignmentHistory: [
       {
-        outletName: { type: String },
-        deployStatus: { type: String },
-        updatedBy: { type: String },
-        updatedAt: { type: Date, default: Date.now },
+        outletName: String,
+        deployStatus: String,
+        deployDate: Date,
+        undeployDate: Date,
+        applicantStatus: String,
+        updatedBy: String,
+        updatedAt: Date,
       },
     ],
 
