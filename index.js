@@ -1037,9 +1037,6 @@ app.put("/assign-outlet", async (req, res) => {
   }
 });
 
-// ── PUT /promote-applicant ────────────────────────────────────────────────────
-// Called when applicantStatus is set to "Onboarded"
-// Promotes the employee record: status → "Active", remarks → "Employed"
 app.put("/promote-applicant", async (req, res) => {
   try {
     const mongoose = require("mongoose");
@@ -1060,7 +1057,6 @@ app.put("/promote-applicant", async (req, res) => {
         .json({ success: false, message: "Invalid employeeId format." });
     }
 
-    // Only promote if they are currently an Applicant
     const doc = await MerchAccount.collection.findOne({ _id: empObjectId });
     if (!doc) {
       return res
@@ -1068,27 +1064,20 @@ app.put("/promote-applicant", async (req, res) => {
         .json({ success: false, message: "Employee not found." });
     }
 
-    if (doc.status?.toLowerCase() !== "applicant") {
-      return res.status(200).json({
-        success: true,
-        message: "Employee is already Active — no promotion needed.",
-        data: doc,
-      });
-    }
-
-    const updateResult = await MerchAccount.collection.updateOne(
+    await MerchAccount.collection.updateOne(
       { _id: empObjectId },
       {
         $set: {
           status: "Active",
           remarks: "Employed",
+          applicantStatus: "", // clear pipeline status
           updatedAt: new Date(),
         },
         $push: {
           outletAssignmentHistory: {
             _id: new mongoose.Types.ObjectId(),
             outletName: doc.outletsAssigned?.[0] || "",
-            deployStatus: "Undeployed",
+            deployStatus: doc.deployStatus || "Deployed",
             applicantStatus: "Onboarded",
             note: "Promoted from Applicant to Employed",
             updatedBy: updatedBy || "Unknown",
@@ -1096,10 +1085,6 @@ app.put("/promote-applicant", async (req, res) => {
           },
         },
       },
-    );
-
-    console.log(
-      `[promote-applicant] ${doc.firstName} ${doc.lastName} promoted to Active/Employed`,
     );
 
     const updated = await MerchAccount.collection.findOne({ _id: empObjectId });
@@ -1111,6 +1096,82 @@ app.put("/promote-applicant", async (req, res) => {
     });
   } catch (error) {
     console.error("Error in /promote-applicant:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Internal server error.",
+      error: error.message,
+    });
+  }
+});
+
+app.put("/remove-outlet-assignment", async (req, res) => {
+  try {
+    const mongoose = require("mongoose");
+    const { outletName, employeeId, remarks, dateResigned, updatedBy } =
+      req.body;
+
+    if (!outletName || !employeeId) {
+      return res.status(400).json({
+        success: false,
+        message: "outletName and employeeId are required.",
+      });
+    }
+
+    let empObjectId;
+    try {
+      empObjectId = new mongoose.Types.ObjectId(employeeId);
+    } catch (e) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Invalid employeeId format." });
+    }
+
+    const doc = await MerchAccount.collection.findOne({ _id: empObjectId });
+    if (!doc) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Employee not found." });
+    }
+
+    // Remove outletName from outletsAssigned array
+    const updatedOutlets = (doc.outletsAssigned || []).filter(
+      (n) => n !== outletName,
+    );
+
+    await MerchAccount.collection.updateOne(
+      { _id: empObjectId },
+      {
+        $set: {
+          outletsAssigned: updatedOutlets,
+          deployStatus: "Undeployed",
+          undeployDate: new Date(),
+          status: "Inactive", // ← set Inactive
+          remarks: remarks || "Resign", // ← Account Supervisor's selected remarks
+          dateResigned: dateResigned ? new Date(dateResigned) : new Date(), // ← today
+          updatedAt: new Date(),
+        },
+        $push: {
+          outletAssignmentHistory: {
+            _id: new mongoose.Types.ObjectId(),
+            outletName: outletName,
+            deployStatus: "Undeployed",
+            deployDate: doc.deployDate || null,
+            undeployDate: new Date(),
+            applicantStatus: "",
+            note: `Removed — replaced by incoming applicant. Remarks: ${remarks || "Resign"}`,
+            updatedBy: updatedBy || "Unknown",
+            updatedAt: new Date(),
+          },
+        },
+      },
+    );
+
+    return res.status(200).json({
+      success: true,
+      message: `${doc.firstName} ${doc.lastName} removed from "${outletName}" and set to Inactive / ${remarks || "Resign"}.`,
+    });
+  } catch (error) {
+    console.error("Error in /remove-outlet-assignment:", error);
     return res.status(500).json({
       success: false,
       message: "Internal server error.",
