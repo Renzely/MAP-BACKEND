@@ -97,7 +97,7 @@ const clientProfileSchema = new mongoose.Schema(
 
     paymentTerm: {
       type: String,
-      enum: ["Check", "Online Payment"],
+      enum: ["Cheque", "Online Payment", "Cash"],
     },
 
     contractSD: {

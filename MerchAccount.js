@@ -5,13 +5,10 @@ const merchAccountSchema = new mongoose.Schema(
     company: { type: String, required: true },
     status: { type: String, required: true },
     remarks: { type: String, required: true },
-    employeeNo: {
-      type: String,
-      required: false,
-      default: null,
-    },
+    employeeNo: { type: String, required: false, default: null },
 
     firstName: { type: String, required: true },
+    suffix: { type: String },
     middleName: { type: String },
     lastName: { type: String, required: true },
     modeOfDisbursement: {
@@ -20,15 +17,11 @@ const merchAccountSchema = new mongoose.Schema(
         return this.status !== "Applicant";
       },
     },
-    accountNumber: {
-      type: String,
-      default: null,
-    },
+    accountNumber: { type: String, default: null },
     contact: { type: String, required: true },
     email: {
       type: String,
-      required: false, // allow missing email
-      // unique: true,  <-- remove this
+      required: false,
       validate: {
         validator: function (v) {
           return !v || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v);
@@ -51,6 +44,7 @@ const merchAccountSchema = new mongoose.Schema(
       },
     },
     dateResigned: { type: Date },
+    reasonForLeaving: { type: String, default: null },
     homeAddress: { type: String, required: true },
     silBalance: {
       type: Number,
@@ -59,16 +53,19 @@ const merchAccountSchema = new mongoose.Schema(
       },
     },
 
+    dateClearance: { type: Date, default: null },
+    clearanceStatus: { type: String, default: null },
+    dateCleared: { type: Date, default: null },
+    dateLastPay: { type: Date, default: null },
+    verdictCalled: { type: String, default: null },
+
     clientAssigned: { type: String, required: true },
 
     region: {
       type: String,
       required: function () {
         const client = this.clientAssigned?.toUpperCase();
-        return (
-          // client === "ECOSSENTIAL FOODS CORP" ||
-          client === "SPX EXPRESS"
-        );
+        return client === "SPX EXPRESS";
       },
     },
 
@@ -76,30 +73,15 @@ const merchAccountSchema = new mongoose.Schema(
       type: String,
       required: function () {
         const client = this.clientAssigned?.toUpperCase();
-        return (
-          // client === "ECOSSENTIAL FOODS CORP" ||
-          client === "SPX EXPRESS"
-        );
+        return client === "SPX EXPRESS";
       },
     },
 
-    account: {
-      type: String,
-      default: null,
-    },
-
-    outletAssigned: {
-      type: String,
-      default: null,
-    },
-
+    account: { type: String, default: null },
+    outletAssigned: { type: String, default: null },
     outletsAssigned: [{ type: String }],
 
-    outletStatusMap: {
-      type: Map,
-      of: String,
-      default: {},
-    },
+    outletStatusMap: { type: Map, of: String, default: {} },
 
     deployStatus: {
       type: String,
@@ -124,12 +106,8 @@ const merchAccountSchema = new mongoose.Schema(
 
     requirementsImages: [{ type: String }],
 
-    createdBy: {
-      type: String, // or change to ObjectId if you want relation later
-      required: true,
-    },
+    createdBy: { type: String, required: true },
   },
-
   { timestamps: true },
 );
 
