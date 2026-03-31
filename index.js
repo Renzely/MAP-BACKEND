@@ -392,9 +392,16 @@ app.put("/update-employee/:id", async (req, res) => {
       tin: "TIN",
       position: "Position",
       dateHired: "Date Hired",
+      dateResigned: "Date Resigned",
+      reasonForLeaving: "Reason for Leaving",
       homeAddress: "Home Address",
       silBalance: "SIL Balance",
       clientAssigned: "Client Assigned",
+      dateClearance: "Date Clearance Started",
+      clearanceStatus: "Clearance Status",
+      dateCleared: "Date Cleared",
+      dateLastPay: "Date Last Pay",
+      verdictCalled: "Verdict",
     };
 
     // ✅ Detect changes
@@ -446,9 +453,8 @@ app.put("/update-employee/:id", async (req, res) => {
     // ✅ Save recent activity log
     if (changes.length > 0) {
       await RecentActivity.create({
-        employeeName: `${original.firstName || ""} ${
-          original.lastName || ""
-        }`.trim(),
+        employeeName:
+          `${original.firstName || ""} ${original.lastName || ""}`.trim(),
         updatedBy: adminName,
         changes,
         date: new Date(),
@@ -756,6 +762,7 @@ app.post("/create-merch-account", async (req, res) => {
       remarks,
       employeeNo,
       firstName,
+      suffix,
       middleName,
       lastName,
       modeOfDisbursement,
@@ -864,6 +871,7 @@ app.post("/create-merch-account", async (req, res) => {
       remarks,
       employeeNo: isApplicant ? null : employeeNo,
       firstName,
+      suffix,
       middleName,
       lastName,
       modeOfDisbursement: isApplicant ? null : modeOfDisbursement,
@@ -1346,6 +1354,7 @@ app.get("/get-merch-accounts", async (req, res) => {
         remarks: 1,
         employeeNo: 1,
         firstName: 1,
+        suffix: 1,
         middleName: 1,
         lastName: 1,
         modeOfDisbursement: 1,
@@ -1363,6 +1372,14 @@ app.get("/get-merch-accounts", async (req, res) => {
         dateResigned: 1,
         homeAddress: 1,
         silBalance: 1,
+
+        reasonForLeaving: 1,
+        dateClearance: 1,
+        clearanceStatus: 1,
+        dateCleared: 1,
+        dateLastPay: 1,
+        verdictCalled: 1,
+
         clientAssigned: 1,
         region: 1,
         outlet: 1,
@@ -1384,7 +1401,6 @@ app.get("/get-merch-accounts", async (req, res) => {
     res.status(500).json({ message: "Failed to fetch accounts" });
   }
 });
-
 // UPDATE USER STATUS
 
 app.put("/update-user-status", async (req, res) => {
