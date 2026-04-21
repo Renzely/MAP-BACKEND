@@ -6,7 +6,7 @@ const merchAccountSchema = new mongoose.Schema(
     status: { type: String, required: true },
     remarks: { type: String, required: true },
     employeeNo: { type: String, required: false, default: null },
-
+    riderid: { type: String, required: false, default: null },
     firstName: { type: String, required: true },
     suffix: { type: String },
     middleName: { type: String },
@@ -37,6 +37,12 @@ const merchAccountSchema = new mongoose.Schema(
     hdmf: { type: String },
     tin: { type: String },
     position: { type: String, required: true },
+    contract: {
+      type: Date,
+      required: function () {
+        return this.status !== "Applicant";
+      },
+    },
     dateHired: {
       type: Date,
       required: function () {
