@@ -1,3 +1,4 @@
+require("node:dns/promises").setServers(["1.1.1.1", "8.8.8.8"]);
 const express = require("express");
 const mongoose = require("mongoose");
 const cors = require("cors");
@@ -134,6 +135,34 @@ app.post("/get-admin-user", async (req, res) => {
   try {
     const users = await AdminUser.find(); // Returns all documents and fields
     return res.send({ status: 200, data: users });
+  } catch (error) {
+    return res.status(500).send({ error: error.message });
+  }
+});
+
+app.post("/get-coordinators", async (req, res) => {
+  try {
+    const users = await AdminUser.find({
+      roleAccount: "COORDINATOR",
+    });
+    return res.send({ status: 200, data: users });
+  } catch (error) {
+    return res.status(500).send({ error: error.message });
+  }
+});
+
+app.put("/assign-coordinator-outlet", async (req, res) => {
+  try {
+    const { adminUserId, outletName } = req.body;
+
+    // Add outlet to array if not already present
+    await AdminUser.findByIdAndUpdate(
+      adminUserId,
+      { $addToSet: { outlet: outletName } }, // $addToSet prevents duplicates
+      { new: true },
+    );
+
+    return res.send({ status: 200, message: "Coordinator outlet assigned" });
   } catch (error) {
     return res.status(500).send({ error: error.message });
   }
@@ -760,6 +789,7 @@ app.post("/create-merch-account", async (req, res) => {
       company,
       status,
       remarks,
+      riderid,
       employeeNo,
       firstName,
       suffix,
@@ -776,6 +806,7 @@ app.post("/create-merch-account", async (req, res) => {
       hdmf,
       tin,
       position,
+      contract,
       dateHired,
       dateResigned,
       homeAddress,
@@ -870,6 +901,7 @@ app.post("/create-merch-account", async (req, res) => {
       status,
       remarks,
       employeeNo: isApplicant ? null : employeeNo,
+      riderid,
       firstName,
       suffix,
       middleName,
@@ -888,6 +920,7 @@ app.post("/create-merch-account", async (req, res) => {
       hdmf: hdmf?.trim() || undefined,
       tin: tin?.trim() || undefined,
       position,
+      contract: isApplicant ? null : contract,
       dateHired: isApplicant ? null : dateHired,
       dateResigned,
       homeAddress,
@@ -916,6 +949,99 @@ app.post("/create-merch-account", async (req, res) => {
     }
 
     return res.status(500).json({ message: "Internal server error" });
+  }
+});
+
+app.put("/assign-outlet-spx", async (req, res) => {
+  try {
+    const mongoose = require("mongoose");
+    const {
+      outletName,
+      region,
+      employeeId,
+      deployStatus,
+      deployDate,
+      undeployDate,
+      updatedBy,
+    } = req.body;
+
+    if (!outletName || !deployStatus || !employeeId) {
+      return res.status(400).json({
+        success: false,
+        message: "outletName, deployStatus, and employeeId are required.",
+      });
+    }
+
+    let empObjectId;
+    try {
+      empObjectId = new mongoose.Types.ObjectId(employeeId);
+    } catch (e) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Invalid employeeId format." });
+    }
+
+    const currentDoc = await MerchAccount.collection.findOne({
+      _id: empObjectId,
+    });
+    if (!currentDoc) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Employee not found." });
+    }
+
+    // ── SPX: Always save deployDate regardless of deployStatus ────────────────
+    const setFields = {
+      outlet: outletName, // single outlet field
+      region: region || "",
+      deployStatus,
+      deployDate: deployDate ? new Date(deployDate) : null, // ← always set
+      undeployDate: undeployDate ? new Date(undeployDate) : null,
+      updatedAt: new Date(),
+    };
+
+    // Keep outletsAssigned in sync too
+    const existingOutlets = Array.isArray(currentDoc.outletsAssigned)
+      ? currentDoc.outletsAssigned.filter(Boolean)
+      : [];
+    setFields.outletsAssigned = existingOutlets.includes(outletName)
+      ? existingOutlets
+      : [...existingOutlets, outletName];
+
+    const historyEntry = {
+      _id: new mongoose.Types.ObjectId(),
+      outletName,
+      deployStatus,
+      deployDate: deployDate ? new Date(deployDate) : null,
+      undeployDate: undeployDate ? new Date(undeployDate) : null,
+      applicantStatus: "",
+      updatedBy: updatedBy || "Unknown",
+      updatedAt: new Date(),
+    };
+
+    await MerchAccount.collection.updateOne(
+      { _id: empObjectId },
+      {
+        $set: setFields,
+        $push: { outletAssignmentHistory: historyEntry },
+      },
+    );
+
+    const verified = await MerchAccount.collection.findOne({
+      _id: empObjectId,
+    });
+    return res.status(200).json({
+      success: true,
+      message: "SPX outlet assignment saved.",
+      data: verified,
+    });
+  } catch (error) {
+    console.error("Error in /assign-outlet-spx:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Internal server error.",
+      error: error.message,
+    });
   }
 });
 
@@ -1270,31 +1396,19 @@ app.get("/get-merch-accounts-dashboard", async (req, res) => {
   try {
     const { company, clientAssigned, year } = req.query;
 
-    const filter = {};
+    const baseFilter = {};
 
-    // ✅ COMPANY FILTER (supports All, BMPOWER, MARABOU)
     if (company && company !== "All") {
-      filter.company = {
-        $regex: new RegExp(`^${company.trim()}$`, "i"),
-      };
+      baseFilter.company = { $regex: new RegExp(`^${company.trim()}$`, "i") };
     }
 
-    // ✅ CLIENT FILTER
     if (clientAssigned) {
-      filter.clientAssigned = {
+      baseFilter.clientAssigned = {
         $regex: new RegExp(`^${clientAssigned.trim()}$`, "i"),
       };
     }
 
-    // ✅ YEAR FILTER (ignore "All")
-    if (year && year !== "All") {
-      filter.dateHired = {
-        $gte: new Date(`${year}-01-01`),
-        $lte: new Date(`${year}-12-31`),
-      };
-    }
-
-    const accounts = await MerchAccount.find(filter, {
+    const projection = {
       company: 1,
       clientAssigned: 1,
       remarks: 1,
@@ -1302,15 +1416,15 @@ app.get("/get-merch-accounts-dashboard", async (req, res) => {
       employeeNo: 1,
       firstName: 1,
       lastName: 1,
+      middleName: 1,
       position: 1,
       dateHired: 1,
       dateResigned: 1,
       createdBy: 1,
       createdAt: 1,
       outletsAssigned: 1,
-    });
+    };
 
-    // ✅ Normalize remarks
     const mapStatus = (remarks) => {
       if (!remarks) return "unknown";
       switch (remarks.toLowerCase()) {
@@ -1318,10 +1432,12 @@ app.get("/get-merch-accounts-dashboard", async (req, res) => {
         case "employed":
           return "employed";
         case "resign":
-          return "resign";
+        case "resigned": // ← add this
+          return "resigned"; // ← return "resigned" (lowercase, consistent)
         case "applicant":
           return "applicant";
         case "terminate":
+        case "terminated": // ← add this
           return "terminate";
         case "end of contract":
           return "end of contract";
@@ -1329,6 +1445,45 @@ app.get("/get-merch-accounts-dashboard", async (req, res) => {
           return "unknown";
       }
     };
+
+    let accounts;
+
+    if (year && year !== "All") {
+      const sevenDaysAgo = new Date();
+      sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+
+      const yearStart = new Date(`${year}-01-01T00:00:00.000+08:00`); // PH time
+      const yearEnd = new Date(`${year}-12-31T23:59:59.999+08:00`); // PH time
+
+      const [yearAccounts, recentAccounts] = await Promise.all([
+        MerchAccount.find(
+          {
+            ...baseFilter,
+            $or: [
+              { dateHired: { $gte: yearStart, $lte: yearEnd } },
+              { dateResigned: { $gte: yearStart, $lte: yearEnd } },
+              { createdAt: { $gte: yearStart, $lte: yearEnd } },
+            ],
+          },
+          projection,
+        ),
+        MerchAccount.find(
+          {
+            ...baseFilter,
+            createdAt: { $gte: sevenDaysAgo },
+          },
+          projection,
+        ),
+      ]);
+
+      const map = new Map();
+      [...yearAccounts, ...recentAccounts].forEach((a) =>
+        map.set(a._id.toString(), a),
+      );
+      accounts = Array.from(map.values());
+    } else {
+      accounts = await MerchAccount.find(baseFilter, projection);
+    }
 
     const normalizedAccounts = accounts.map((a) => ({
       ...a._doc,
@@ -1352,6 +1507,7 @@ app.get("/get-merch-accounts", async (req, res) => {
         company: 1,
         status: 1,
         remarks: 1,
+        riderid: 1,
         employeeNo: 1,
         firstName: 1,
         suffix: 1,
@@ -1401,6 +1557,25 @@ app.get("/get-merch-accounts", async (req, res) => {
     res.status(500).json({ message: "Failed to fetch accounts" });
   }
 });
+
+app.put("/update-employee-remarks", async (req, res) => {
+  const { employeeId, remarks, updatedBy } = req.body;
+  await MerchAccount.findByIdAndUpdate(employeeId, {
+    remarks,
+    updatedAt: new Date(),
+  });
+  res.json({ success: true });
+});
+
+app.put("/update-employee-status", async (req, res) => {
+  const { employeeId, status, updatedBy } = req.body;
+  await MerchAccount.findByIdAndUpdate(employeeId, {
+    status,
+    updatedAt: new Date(),
+  });
+  res.json({ success: true });
+});
+
 // UPDATE USER STATUS
 
 app.put("/update-user-status", async (req, res) => {
