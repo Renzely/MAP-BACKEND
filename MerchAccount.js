@@ -37,10 +37,10 @@ const merchAccountSchema = new mongoose.Schema(
     hdmf: { type: String },
     tin: { type: String },
     position: { type: String, required: true },
-    contract: {
+    proviDate: {
       type: Date,
       required: function () {
-        return this.status !== "Applicant";
+        return this.client === "SPX EXPRESS" && this.status !== "Applicant";
       },
     },
     dateHired: {
@@ -98,6 +98,9 @@ const merchAccountSchema = new mongoose.Schema(
     deployDate: { type: Date, default: null },
     undeployDate: { type: Date, default: null },
     applicantStatus: { type: String, default: "" },
+    backOutReason: { type: String, default: "" },
+    targetOnboardDate: { type: Date, default: null },
+    terminateReason: { type: String, default: "" },
     outletAssignmentHistory: [
       {
         outletName: String,
@@ -105,6 +108,9 @@ const merchAccountSchema = new mongoose.Schema(
         deployDate: Date,
         undeployDate: Date,
         applicantStatus: String,
+        backOutReason: String,
+        targetOnboardDate: Date,
+        terminateReason: String,
         updatedBy: String,
         updatedAt: Date,
       },
