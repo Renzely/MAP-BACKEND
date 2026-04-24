@@ -806,7 +806,7 @@ app.post("/create-merch-account", async (req, res) => {
       hdmf,
       tin,
       position,
-      contract,
+      proviDate,
       dateHired,
       dateResigned,
       homeAddress,
@@ -920,7 +920,7 @@ app.post("/create-merch-account", async (req, res) => {
       hdmf: hdmf?.trim() || undefined,
       tin: tin?.trim() || undefined,
       position,
-      contract: isApplicant ? null : contract,
+      proviDate: isApplicant ? null : proviDate,
       dateHired: isApplicant ? null : dateHired,
       dateResigned,
       homeAddress,
@@ -1055,6 +1055,8 @@ app.put("/assign-outlet", async (req, res) => {
       deployDate,
       undeployDate,
       applicantStatus,
+      backOutReason,
+      targetOnboardDate,
       updatedBy,
     } = req.body;
 
@@ -1124,14 +1126,21 @@ app.put("/assign-outlet", async (req, res) => {
 
     if (deployStatus === "Deployed") {
       setFields.applicantStatus = "";
+      setFields.backOutReason = ""; // ← add
+      setFields.targetOnboardDate = null; // ← add
       setFields.undeployDate = null;
       if (deployDate) setFields.deployDate = new Date(deployDate);
     } else {
       setFields.applicantStatus = applicantStatus || "";
+      setFields.backOutReason = backOutReason || ""; // ← add
+      if (targetOnboardDate) {
+        setFields.targetOnboardDate = new Date(targetOnboardDate);
+      } else if (targetOnboardDate === "") {
+        setFields.targetOnboardDate = null; // explicitly cleared
+      }
       setFields.deployDate = null;
       if (undeployDate) setFields.undeployDate = new Date(undeployDate);
     }
-
     const historyEntry = {
       _id: new mongoose.Types.ObjectId(),
       outletName,
@@ -1139,6 +1148,8 @@ app.put("/assign-outlet", async (req, res) => {
       deployDate: deployDate ? new Date(deployDate) : null,
       undeployDate: undeployDate ? new Date(undeployDate) : null,
       applicantStatus: applicantStatus || "",
+      backOutReason: backOutReason || "",
+      targetOnboardDate: targetOnboardDate ? new Date(targetOnboardDate) : null,
       updatedBy: updatedBy || "Unknown",
       updatedAt: new Date(),
     };
@@ -1241,8 +1252,14 @@ app.put("/promote-applicant", async (req, res) => {
 app.put("/remove-outlet-assignment", async (req, res) => {
   try {
     const mongoose = require("mongoose");
-    const { outletName, employeeId, remarks, dateResigned, updatedBy } =
-      req.body;
+    const {
+      outletName,
+      employeeId,
+      remarks,
+      terminateReason,
+      dateResigned,
+      updatedBy,
+    } = req.body;
 
     if (!outletName || !employeeId) {
       return res.status(400).json({
@@ -1292,7 +1309,11 @@ app.put("/remove-outlet-assignment", async (req, res) => {
             deployDate: doc.deployDate || null,
             undeployDate: new Date(),
             applicantStatus: "",
-            note: `Removed — replaced by incoming applicant. Remarks: ${remarks || "Resign"}`,
+            jsnote: `Removed — replaced by incoming applicant. Remarks: ${remarks || "Resign"}${
+              remarks === "Terminated" && terminateReason
+                ? `. Reason: ${terminateReason}`
+                : ""
+            }`,
             updatedBy: updatedBy || "Unknown",
             updatedAt: new Date(),
           },
@@ -1546,6 +1567,8 @@ app.get("/get-merch-accounts", async (req, res) => {
         deployDate: 1,
         undeployDate: 1,
         applicantStatus: 1,
+        backOutReason: 1,
+        targetOnboardDate: 1,
         outletAssignmentHistory: 1,
         requirementsImages: 1,
       },
