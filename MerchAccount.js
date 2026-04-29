@@ -96,6 +96,7 @@ const merchAccountSchema = new mongoose.Schema(
     },
 
     deployDate: { type: Date, default: null },
+    temporaryDeployEndDate: { type: Date, default: null },
     undeployDate: { type: Date, default: null },
     applicantStatus: { type: String, default: "" },
     backOutReason: { type: String, default: "" },

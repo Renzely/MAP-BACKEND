@@ -1057,6 +1057,7 @@ app.put("/assign-outlet", async (req, res) => {
       applicantStatus,
       backOutReason,
       targetOnboardDate,
+      temporaryDeployEndDate,
       updatedBy,
     } = req.body;
 
@@ -1126,17 +1127,29 @@ app.put("/assign-outlet", async (req, res) => {
 
     if (deployStatus === "Deployed") {
       setFields.applicantStatus = "";
-      setFields.backOutReason = ""; // ← add
-      setFields.targetOnboardDate = null; // ← add
+      setFields.backOutReason = "";
+      setFields.targetOnboardDate = null;
+      setFields.temporaryDeployEndDate = null; // ← clear when fully Deployed
       setFields.undeployDate = null;
       if (deployDate) setFields.deployDate = new Date(deployDate);
+    } else if (deployStatus === "Reliever Deployed") {
+      setFields.applicantStatus = "";
+      setFields.backOutReason = "";
+      setFields.targetOnboardDate = null;
+      setFields.undeployDate = null;
+      if (deployDate) setFields.deployDate = new Date(deployDate);
+      setFields.temporaryDeployEndDate = temporaryDeployEndDate // ← save it
+        ? new Date(temporaryDeployEndDate)
+        : null;
     } else {
+      // Undeployed
       setFields.applicantStatus = applicantStatus || "";
-      setFields.backOutReason = backOutReason || ""; // ← add
+      setFields.backOutReason = backOutReason || "";
+      setFields.temporaryDeployEndDate = null; // ← clear when undeployed
       if (targetOnboardDate) {
         setFields.targetOnboardDate = new Date(targetOnboardDate);
       } else if (targetOnboardDate === "") {
-        setFields.targetOnboardDate = null; // explicitly cleared
+        setFields.targetOnboardDate = null;
       }
       setFields.deployDate = null;
       if (undeployDate) setFields.undeployDate = new Date(undeployDate);
@@ -1150,6 +1163,9 @@ app.put("/assign-outlet", async (req, res) => {
       applicantStatus: applicantStatus || "",
       backOutReason: backOutReason || "",
       targetOnboardDate: targetOnboardDate ? new Date(targetOnboardDate) : null,
+      temporaryDeployEndDate: temporaryDeployEndDate // ← add
+        ? new Date(temporaryDeployEndDate)
+        : null,
       updatedBy: updatedBy || "Unknown",
       updatedAt: new Date(),
     };
@@ -1571,6 +1587,7 @@ app.get("/get-merch-accounts", async (req, res) => {
         targetOnboardDate: 1,
         outletAssignmentHistory: 1,
         requirementsImages: 1,
+        temporaryDeployEndDate: 1,
       },
     );
 
