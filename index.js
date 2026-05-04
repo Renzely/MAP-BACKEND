@@ -934,6 +934,25 @@ app.post("/create-merch-account", async (req, res) => {
 
     await newAccount.save();
 
+    try {
+      await RecentActivity.create({
+        employeeName: `${firstName} ${lastName}`,
+        date: new Date(),
+        updatedBy: createdBy || "Unknown",
+        updatedByRole: req.body.createdByRole || "",
+        activityType: "NEW_EMPLOYEE",
+        changes: [
+          { field: "Company", oldValue: "—", newValue: company },
+          { field: "Client Assigned", oldValue: "—", newValue: clientAssigned },
+          { field: "Position", oldValue: "—", newValue: position },
+          { field: "Status", oldValue: "—", newValue: status },
+          { field: "Remarks", oldValue: "—", newValue: remarks },
+        ],
+      });
+    } catch (logErr) {
+      console.error("Failed to log new employee activity:", logErr);
+    }
+
     return res.status(200).json({
       message: "Account created successfully",
       data: newAccount,
@@ -1045,6 +1064,28 @@ app.put("/assign-outlet-spx", async (req, res) => {
   }
 });
 
+async function logOutletActivity({
+  employeeName,
+  changes,
+  updatedBy,
+  updatedByRole,
+}) {
+  try {
+    await RecentActivity.create({
+      employeeName,
+      date: new Date(),
+      updatedBy: updatedBy || "Unknown",
+      updatedByRole: updatedByRole || "",
+      changes,
+    });
+  } catch (err) {
+    console.error("Failed to log recent activity:", err);
+  }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// /assign-outlet
+// ════════════════════════════════════════════════════════════════════════════
 app.put("/assign-outlet", async (req, res) => {
   try {
     const mongoose = require("mongoose");
@@ -1059,6 +1100,7 @@ app.put("/assign-outlet", async (req, res) => {
       targetOnboardDate,
       temporaryDeployEndDate,
       updatedBy,
+      updatedByRole,
     } = req.body;
 
     if (!outletName || !deployStatus) {
@@ -1100,7 +1142,7 @@ app.put("/assign-outlet", async (req, res) => {
       { $pull: { outletsAssigned: outletName } },
     );
 
-    // ── Step 2: Get current outletsAssigned for this employee ─────────────────
+    // ── Step 2: Get current doc BEFORE update (for old values) ────────────────
     const currentDoc = await MerchAccount.collection.findOne({
       _id: empObjectId,
     });
@@ -1110,9 +1152,11 @@ app.put("/assign-outlet", async (req, res) => {
         .json({ success: false, message: "Employee not found." });
     }
 
+    const employeeName = `${currentDoc.firstName} ${currentDoc.lastName}`;
+
     // ── Step 3: Build the new outletsAssigned array manually ─────────────────
     const existingOutlets = Array.isArray(currentDoc.outletsAssigned)
-      ? currentDoc.outletsAssigned.filter(Boolean) // remove nulls/empty
+      ? currentDoc.outletsAssigned.filter(Boolean)
       : [];
     const newOutletsAssigned = existingOutlets.includes(outletName)
       ? existingOutlets
@@ -1121,7 +1165,7 @@ app.put("/assign-outlet", async (req, res) => {
     // ── Step 4: Build $set fields ─────────────────────────────────────────────
     const setFields = {
       deployStatus,
-      outletsAssigned: newOutletsAssigned, // ← FORCE SET the full array
+      outletsAssigned: newOutletsAssigned,
       updatedAt: new Date(),
     };
 
@@ -1129,7 +1173,7 @@ app.put("/assign-outlet", async (req, res) => {
       setFields.applicantStatus = "";
       setFields.backOutReason = "";
       setFields.targetOnboardDate = null;
-      setFields.temporaryDeployEndDate = null; // ← clear when fully Deployed
+      setFields.temporaryDeployEndDate = null;
       setFields.undeployDate = null;
       if (deployDate) setFields.deployDate = new Date(deployDate);
     } else if (deployStatus === "Reliever Deployed") {
@@ -1138,14 +1182,14 @@ app.put("/assign-outlet", async (req, res) => {
       setFields.targetOnboardDate = null;
       setFields.undeployDate = null;
       if (deployDate) setFields.deployDate = new Date(deployDate);
-      setFields.temporaryDeployEndDate = temporaryDeployEndDate // ← save it
+      setFields.temporaryDeployEndDate = temporaryDeployEndDate
         ? new Date(temporaryDeployEndDate)
         : null;
     } else {
       // Undeployed
       setFields.applicantStatus = applicantStatus || "";
       setFields.backOutReason = backOutReason || "";
-      setFields.temporaryDeployEndDate = null; // ← clear when undeployed
+      setFields.temporaryDeployEndDate = null;
       if (targetOnboardDate) {
         setFields.targetOnboardDate = new Date(targetOnboardDate);
       } else if (targetOnboardDate === "") {
@@ -1154,6 +1198,7 @@ app.put("/assign-outlet", async (req, res) => {
       setFields.deployDate = null;
       if (undeployDate) setFields.undeployDate = new Date(undeployDate);
     }
+
     const historyEntry = {
       _id: new mongoose.Types.ObjectId(),
       outletName,
@@ -1163,15 +1208,15 @@ app.put("/assign-outlet", async (req, res) => {
       applicantStatus: applicantStatus || "",
       backOutReason: backOutReason || "",
       targetOnboardDate: targetOnboardDate ? new Date(targetOnboardDate) : null,
-      temporaryDeployEndDate: temporaryDeployEndDate // ← add
+      temporaryDeployEndDate: temporaryDeployEndDate
         ? new Date(temporaryDeployEndDate)
         : null,
       updatedBy: updatedBy || "Unknown",
       updatedAt: new Date(),
     };
 
-    // ── Step 5: Update using $set for everything including outletsAssigned ────
-    const updateResult = await MerchAccount.collection.updateOne(
+    // ── Step 5: Update ────────────────────────────────────────────────────────
+    await MerchAccount.collection.updateOne(
       { _id: empObjectId },
       {
         $set: setFields,
@@ -1179,7 +1224,124 @@ app.put("/assign-outlet", async (req, res) => {
       },
     );
 
-    // ── Step 6: Verify what was actually saved ────────────────────────────────
+    // ── Step 6: Build activity log changes (old → new) ────────────────────────
+    const activityChanges = [];
+
+    // Outlet assignment (first time)
+    if (!existingOutlets.includes(outletName)) {
+      activityChanges.push({
+        field: "Outlet Assigned",
+        oldValue: "None",
+        newValue: outletName,
+      });
+    }
+
+    // Deploy Status change
+    if ((currentDoc.deployStatus || "Undeployed") !== deployStatus) {
+      activityChanges.push({
+        field: "Deploy Status",
+        oldValue: currentDoc.deployStatus || "Undeployed",
+        newValue: deployStatus,
+      });
+    }
+
+    // Deploy Date change
+    const oldDeployDate = currentDoc.deployDate
+      ? new Date(currentDoc.deployDate).toISOString().split("T")[0]
+      : null;
+    const newDeployDate = deployDate || null;
+    if (deployStatus === "Deployed" || deployStatus === "Reliever Deployed") {
+      if (oldDeployDate !== newDeployDate) {
+        activityChanges.push({
+          field: "Deploy Date",
+          oldValue: oldDeployDate || "—",
+          newValue: newDeployDate || "—",
+        });
+      }
+    }
+
+    // Undeploy Date change
+    const oldUndeployDate = currentDoc.undeployDate
+      ? new Date(currentDoc.undeployDate).toISOString().split("T")[0]
+      : null;
+    const newUndeployDate = undeployDate || null;
+    if (deployStatus === "Undeployed" && oldUndeployDate !== newUndeployDate) {
+      activityChanges.push({
+        field: "Undeploy Date",
+        oldValue: oldUndeployDate || "—",
+        newValue: newUndeployDate || "—",
+      });
+    }
+
+    // Reliever End Date change
+    if (deployStatus === "Reliever Deployed") {
+      const oldEnd = currentDoc.temporaryDeployEndDate
+        ? new Date(currentDoc.temporaryDeployEndDate)
+            .toISOString()
+            .split("T")[0]
+        : null;
+      const newEnd = temporaryDeployEndDate || null;
+      if (oldEnd !== newEnd) {
+        activityChanges.push({
+          field: "Reliever Deploy Until",
+          oldValue: oldEnd || "—",
+          newValue: newEnd || "—",
+        });
+      }
+    }
+
+    // Applicant Status change
+    const oldAppStatus = currentDoc.applicantStatus || "";
+    const newAppStatus = applicantStatus || "";
+    if (deployStatus === "Undeployed" && oldAppStatus !== newAppStatus) {
+      activityChanges.push({
+        field: "Applicant Status",
+        oldValue: oldAppStatus || "—",
+        newValue: newAppStatus || "—",
+      });
+    }
+
+    // Back Out Reason
+    if (applicantStatus === "Back Out" && backOutReason) {
+      activityChanges.push({
+        field: "Back Out Reason",
+        oldValue: currentDoc.backOutReason || "—",
+        newValue: backOutReason,
+      });
+    }
+
+    // Target Onboard Date
+    if (applicantStatus === "For Onboarding") {
+      const oldTarget = currentDoc.targetOnboardDate
+        ? new Date(currentDoc.targetOnboardDate).toISOString().split("T")[0]
+        : null;
+      const newTarget = targetOnboardDate || null;
+      if (oldTarget !== newTarget) {
+        activityChanges.push({
+          field: "Target Onboard Date",
+          oldValue: oldTarget || "—",
+          newValue: newTarget || "—",
+        });
+      }
+    }
+
+    // Always note the outlet context
+    activityChanges.push({
+      field: "Outlet",
+      oldValue: outletName,
+      newValue: outletName,
+    });
+
+    if (activityChanges.filter((c) => c.field !== "Outlet").length > 0) {
+      await logOutletActivity({
+        employeeName,
+        changes: activityChanges,
+        updatedBy,
+        updatedByRole,
+      });
+    }
+
+    // ── Step 7: Verify ────────────────────────────────────────────────────────
     const verified = await MerchAccount.collection.findOne({
       _id: empObjectId,
     });
@@ -1198,10 +1360,13 @@ app.put("/assign-outlet", async (req, res) => {
   }
 });
 
+// ════════════════════════════════════════════════════════════════════════════
+// /promote-applicant
+// ════════════════════════════════════════════════════════════════════════════
 app.put("/promote-applicant", async (req, res) => {
   try {
     const mongoose = require("mongoose");
-    const { employeeId, updatedBy } = req.body;
+    const { employeeId, updatedBy, updatedByRole } = req.body;
 
     if (!employeeId) {
       return res
@@ -1231,7 +1396,7 @@ app.put("/promote-applicant", async (req, res) => {
         $set: {
           status: "Active",
           remarks: "Employed",
-          applicantStatus: "", // clear pipeline status
+          applicantStatus: "",
           updatedAt: new Date(),
         },
         $push: {
@@ -1248,8 +1413,38 @@ app.put("/promote-applicant", async (req, res) => {
       },
     );
 
-    const updated = await MerchAccount.collection.findOne({ _id: empObjectId });
+    const employeeName = `${doc.firstName} ${doc.lastName}`;
+    const outletName = doc.outletsAssigned?.[0] || "Unknown Outlet";
 
+    await logOutletActivity({
+      employeeName,
+      updatedBy,
+      updatedByRole,
+      changes: [
+        {
+          field: "Status",
+          oldValue: "Applicant",
+          newValue: "Active / Employed",
+        },
+        {
+          field: "Remarks",
+          oldValue: doc.remarks || "—",
+          newValue: "Employed",
+        },
+        {
+          field: "Applicant Status",
+          oldValue: doc.applicantStatus || "Onboarded",
+          newValue: "Promoted — pipeline cleared",
+        },
+        {
+          field: "Outlet",
+          oldValue: outletName,
+          newValue: outletName,
+        },
+      ],
+    });
+
+    const updated = await MerchAccount.collection.findOne({ _id: empObjectId });
     return res.status(200).json({
       success: true,
       message: `${doc.firstName} ${doc.lastName} has been promoted to Active / Employed.`,
@@ -1265,6 +1460,9 @@ app.put("/promote-applicant", async (req, res) => {
   }
 });
 
+// ════════════════════════════════════════════════════════════════════════════
+// /remove-outlet-assignment
+// ════════════════════════════════════════════════════════════════════════════
 app.put("/remove-outlet-assignment", async (req, res) => {
   try {
     const mongoose = require("mongoose");
@@ -1275,6 +1473,7 @@ app.put("/remove-outlet-assignment", async (req, res) => {
       terminateReason,
       dateResigned,
       updatedBy,
+      updatedByRole,
     } = req.body;
 
     if (!outletName || !employeeId) {
@@ -1300,7 +1499,6 @@ app.put("/remove-outlet-assignment", async (req, res) => {
         .json({ success: false, message: "Employee not found." });
     }
 
-    // Remove outletName from outletsAssigned array
     const updatedOutlets = (doc.outletsAssigned || []).filter(
       (n) => n !== outletName,
     );
@@ -1312,15 +1510,15 @@ app.put("/remove-outlet-assignment", async (req, res) => {
           outletsAssigned: updatedOutlets,
           deployStatus: "Undeployed",
           undeployDate: new Date(),
-          status: "Inactive", // ← set Inactive
-          remarks: remarks || "Resign", // ← Account Supervisor's selected remarks
-          dateResigned: dateResigned ? new Date(dateResigned) : new Date(), // ← today
+          status: "Inactive",
+          remarks: remarks || "Resign",
+          dateResigned: dateResigned ? new Date(dateResigned) : new Date(),
           updatedAt: new Date(),
         },
         $push: {
           outletAssignmentHistory: {
             _id: new mongoose.Types.ObjectId(),
-            outletName: outletName,
+            outletName,
             deployStatus: "Undeployed",
             deployDate: doc.deployDate || null,
             undeployDate: new Date(),
@@ -1337,6 +1535,52 @@ app.put("/remove-outlet-assignment", async (req, res) => {
       },
     );
 
+    const employeeName = `${doc.firstName} ${doc.lastName}`;
+
+    const changes = [
+      {
+        field: "Deploy Status",
+        oldValue: doc.deployStatus || "Deployed",
+        newValue: "Undeployed",
+      },
+      {
+        field: "Employee Status",
+        oldValue: doc.status || "Active",
+        newValue: "Inactive",
+      },
+      {
+        field: "Remarks",
+        oldValue: doc.remarks || "—",
+        newValue: remarks || "Resign",
+      },
+      {
+        field: "Outlet Removed",
+        oldValue: outletName,
+        newValue: "Unassigned",
+      },
+    ];
+
+    if (remarks === "Terminated" && terminateReason) {
+      changes.push({
+        field: "Termination Reason",
+        oldValue: "—",
+        newValue: terminateReason,
+      });
+    }
+
+    changes.push({
+      field: "Outlet",
+      oldValue: outletName,
+      newValue: outletName,
+    });
+
+    await logOutletActivity({
+      employeeName,
+      changes,
+      updatedBy,
+      updatedByRole,
+    });
+
     return res.status(200).json({
       success: true,
       message: `${doc.firstName} ${doc.lastName} removed from "${outletName}" and set to Inactive / ${remarks || "Resign"}.`,
@@ -1351,9 +1595,13 @@ app.put("/remove-outlet-assignment", async (req, res) => {
   }
 });
 
+// ════════════════════════════════════════════════════════════════════════════
+// /assign-coordinator
+// ════════════════════════════════════════════════════════════════════════════
 app.put("/assign-coordinator", async (req, res) => {
   try {
-    const { outletName, employeeId, deployStatus, updatedBy } = req.body;
+    const { outletName, employeeId, deployStatus, updatedBy, updatedByRole } =
+      req.body;
 
     if (!outletName || !deployStatus) {
       return res.status(400).json({
@@ -1378,6 +1626,9 @@ app.put("/assign-coordinator", async (req, res) => {
         .json({ success: true, message: "Coordinator assignment cleared." });
     }
 
+    // ── Get current coordinator doc BEFORE update ─────────────────────────────
+    const currentCoord = await MerchAccount.findById(employeeId);
+
     // ── Remove outlet from any OTHER coordinator ───────────────────────────────
     await MerchAccount.updateMany(
       {
@@ -1388,8 +1639,6 @@ app.put("/assign-coordinator", async (req, res) => {
       { $pull: { outletsAssigned: outletName } },
     );
 
-    // ── Save outlet + per-outlet status ───────────────────────────────────────
-    // Use a safe key (dots not allowed in MongoDB keys)
     const safeKey = outletName.replace(/\./g, "_");
 
     const updated = await MerchAccount.findByIdAndUpdate(
@@ -1413,6 +1662,50 @@ app.put("/assign-coordinator", async (req, res) => {
       return res
         .status(404)
         .json({ success: false, message: "Coordinator not found." });
+
+    // ── Log coordinator activity ───────────────────────────────────────────────
+    if (currentCoord) {
+      const coordName = `${currentCoord.firstName} ${currentCoord.lastName}`;
+      const oldStatus =
+        currentCoord.outletStatusMap?.get?.(safeKey) ||
+        currentCoord.outletStatusMap?.[safeKey] ||
+        "Inactive";
+      const wasAssigned = (currentCoord.outletsAssigned || []).includes(
+        outletName,
+      );
+      const actChanges = [];
+
+      if (!wasAssigned) {
+        actChanges.push({
+          field: "Coordinator Assigned",
+          oldValue: "None",
+          newValue: outletName,
+        });
+      }
+
+      if (oldStatus !== deployStatus) {
+        actChanges.push({
+          field: "Coordinator Status",
+          oldValue: oldStatus,
+          newValue: deployStatus,
+        });
+      }
+
+      actChanges.push({
+        field: "Outlet",
+        oldValue: outletName,
+        newValue: outletName,
+      });
+
+      if (actChanges.filter((c) => c.field !== "Outlet").length > 0) {
+        await logOutletActivity({
+          employeeName: coordName,
+          changes: actChanges,
+          updatedBy,
+          updatedByRole,
+        });
+      }
+    }
 
     return res.status(200).json({
       success: true,
