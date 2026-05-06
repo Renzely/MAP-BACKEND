@@ -69,18 +69,10 @@ const merchAccountSchema = new mongoose.Schema(
 
     region: {
       type: String,
-      required: function () {
-        const client = this.clientAssigned?.toUpperCase();
-        return client === "SPX EXPRESS";
-      },
     },
 
     outlet: {
       type: String,
-      required: function () {
-        const client = this.clientAssigned?.toUpperCase();
-        return client === "SPX EXPRESS";
-      },
     },
 
     account: { type: String, default: null },
