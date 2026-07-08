@@ -87,6 +87,12 @@ const merchAccountSchema = new mongoose.Schema(
       default: "Undeployed",
     },
 
+    deploymentType: {
+      type: String,
+      enum: ["Stationary", "Roving"],
+      default: "Stationary",
+    },
+
     deployDate: { type: Date, default: null },
     temporaryDeployEndDate: { type: Date, default: null },
     undeployDate: { type: Date, default: null },
@@ -98,6 +104,7 @@ const merchAccountSchema = new mongoose.Schema(
       {
         outletName: String,
         deployStatus: String,
+        deploymentType: String,
         deployDate: Date,
         undeployDate: Date,
         applicantStatus: String,

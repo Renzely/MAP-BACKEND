@@ -1215,6 +1215,7 @@ app.put("/assign-outlet", async (req, res) => {
       outletName,
       employeeId,
       deployStatus,
+      deploymentType,
       deployDate,
       undeployDate,
       applicantStatus,
@@ -1224,7 +1225,6 @@ app.put("/assign-outlet", async (req, res) => {
       updatedBy,
       updatedByRole,
     } = req.body;
-
     if (!outletName || !deployStatus) {
       return res.status(400).json({
         success: false,
@@ -1233,10 +1233,19 @@ app.put("/assign-outlet", async (req, res) => {
     }
 
     if (!employeeId) {
+      // await MerchAccount.collection.updateMany(
+      //   {
+      //     clientAssigned: { $regex: /ECOSSENTIAL FOODS CORP/i },
+      //     outletsAssigned: outletName,
+      //     deploymentType: { $ne: "Roving" },
+      //   },
+      //   { $pull: { outletsAssigned: outletName } },
+      // );
       await MerchAccount.collection.updateMany(
         {
           clientAssigned: { $regex: /ECOSSENTIAL FOODS CORP/i },
-          outletsAssigned: outletName,
+          outletsAssigned: outletName, // matches docs having "SUPER 8"
+          _id: { $ne: empObjectId }, // exclude Juan
         },
         { $pull: { outletsAssigned: outletName } },
       );
@@ -1276,17 +1285,23 @@ app.put("/assign-outlet", async (req, res) => {
 
     const employeeName = `${currentDoc.firstName} ${currentDoc.lastName}`;
 
-    // ── Step 3: Build the new outletsAssigned array manually ─────────────────
+    // ── Step 3: Build the new outletsAssigned array ──────────────────────────
     const existingOutlets = Array.isArray(currentDoc.outletsAssigned)
       ? currentDoc.outletsAssigned.filter(Boolean)
       : [];
-    const newOutletsAssigned = existingOutlets.includes(outletName)
-      ? existingOutlets
-      : [...existingOutlets, outletName];
 
+    // Roving → same merchandiser may hold multiple outlets (append this one, keep the rest).
+    // Stationary → merchandiser is tied to THIS outlet only (replace the array).
+    const newOutletsAssigned =
+      deploymentType === "Roving"
+        ? existingOutlets.includes(outletName)
+          ? existingOutlets
+          : [...existingOutlets, outletName]
+        : [outletName];
     // ── Step 4: Build $set fields ─────────────────────────────────────────────
     const setFields = {
       deployStatus,
+      deploymentType: deploymentType || "Stationary",
       outletsAssigned: newOutletsAssigned,
       updatedAt: new Date(),
     };
@@ -1325,6 +1340,7 @@ app.put("/assign-outlet", async (req, res) => {
       _id: new mongoose.Types.ObjectId(),
       outletName,
       deployStatus,
+      deploymentType: deploymentType || "Stationary",
       deployDate: deployDate ? new Date(deployDate) : null,
       undeployDate: undeployDate ? new Date(undeployDate) : null,
       applicantStatus: applicantStatus || "",
@@ -1348,6 +1364,17 @@ app.put("/assign-outlet", async (req, res) => {
 
     // ── Step 6: Build activity log changes (old → new) ────────────────────────
     const activityChanges = [];
+
+    if (
+      (currentDoc.deploymentType || "Stationary") !==
+      (deploymentType || "Stationary")
+    ) {
+      activityChanges.push({
+        field: "Type of Deployment",
+        oldValue: currentDoc.deploymentType || "Stationary",
+        newValue: deploymentType || "Stationary",
+      });
+    }
 
     // Outlet assignment (first time)
     if (!existingOutlets.includes(outletName)) {
@@ -1737,6 +1764,7 @@ app.put("/assign-coordinator", async (req, res) => {
         {
           clientAssigned: { $regex: /ECOSSENTIAL FOODS CORP/i },
           outletsAssigned: outletName,
+          position: { $in: ["Tactical Coordinator", "Account Coordinator"] }, // ← ADDED: only touch coordinators
         },
         {
           $pull: { outletsAssigned: outletName },
@@ -1757,6 +1785,7 @@ app.put("/assign-coordinator", async (req, res) => {
         clientAssigned: { $regex: /ECOSSENTIAL FOODS CORP/i },
         outletsAssigned: outletName,
         _id: { $ne: employeeId },
+        position: { $in: ["Tactical Coordinator", "Account Coordinator"] }, // ← ADDED: only touch coordinators
       },
       { $pull: { outletsAssigned: outletName } },
     );
@@ -1995,6 +2024,7 @@ app.get("/get-merch-accounts", async (req, res) => {
         outletsAssigned: 1,
         outletStatusMap: 1,
         deployStatus: 1,
+        deploymentType: 1,
         deployDate: 1,
         undeployDate: 1,
         applicantStatus: 1,
