@@ -17,6 +17,11 @@ const authMiddleware = require("./auth");
 const jwt = require("jsonwebtoken");
 require("dotenv").config();
 
+const http = require("http");
+const { Server } = require("socket.io");
+const Notification = require("./notification");
+const { notifyActivity } = require("./notifyActivity");
+
 const nodemailer = require("nodemailer");
 const Otp = require("./otp");
 
@@ -149,6 +154,29 @@ app.post("/get-coordinators", async (req, res) => {
   } catch (error) {
     return res.status(500).send({ error: error.message });
   }
+});
+
+app.get("/notifications", async (req, res) => {
+  const { role } = req.query;
+  const items = await Notification.find({ targetRoles: role })
+    .sort({ date: -1 })
+    .limit(30);
+  res.json({ data: items });
+});
+
+app.post("/notifications/mark-read", async (req, res) => {
+  const { user, role } = req.body;
+  await Notification.updateMany(
+    { targetRoles: role },
+    { $addToSet: { readBy: user } },
+  );
+  res.json({ ok: true });
+});
+
+app.get("/test-notif", (req, res) => {
+  const io = req.app.get("io");
+  io.emit("notification", { message: "TEST popup", date: new Date() });
+  res.send("sent");
 });
 
 app.put("/assign-coordinator-outlet", async (req, res) => {
@@ -553,6 +581,9 @@ app.put("/update-employee/:id", async (req, res) => {
 
     // ✅ Save recent activity log
     if (changes.length > 0) {
+      const isSPX = (original.clientAssigned || "")
+        .toUpperCase()
+        .includes("SPX");
       await RecentActivity.create({
         employeeName:
           `${original.firstName || ""} ${original.lastName || ""}`.trim(),
@@ -560,6 +591,8 @@ app.put("/update-employee/:id", async (req, res) => {
         changes,
         date: new Date(),
       });
+      const io = req.app.get("io");
+      await notifyActivity(io, savedActivity, "CORE");
     }
 
     // ✅ Send success response
@@ -930,20 +963,6 @@ app.post("/create-merch-account", async (req, res) => {
       }
     }
 
-    // 🆕 Validate outlet for ECOSSENTIAL FOODS CORP and SPX EXPRESS
-    // 🆕 Only require outlet/hub for SPX for now
-    // if (clientAssigned === "SPX EXPRESS" && (!outlet || outlet.trim() === "")) {
-    //   return res.status(400).json({
-    //     message: "Hub is required for SPX EXPRESS",
-    //   });
-    // }
-
-    // Optional for EFC and others
-    // if needed later, uncomment for next update
-    // if (clientAssigned === "ECOSSENTIAL FOODS CORP" && (!outlet || outlet.trim() === "")) {
-    //   return res.status(400).json({ message: "Outlet is required for ECOSSENTIAL FOODS CORP" });
-    // }
-
     if (!createdBy) {
       return res.status(400).json({ message: "Missing admin creator info" });
     }
@@ -1007,7 +1026,11 @@ app.post("/create-merch-account", async (req, res) => {
     await newAccount.save();
 
     try {
-      await RecentActivity.create({
+      const isSPX =
+        (clientAssigned || "").toUpperCase().includes("SPX") ||
+        (company || "").toUpperCase().includes("SPX");
+
+      const savedActivity = await RecentActivity.create({
         employeeName: `${firstName} ${lastName}`,
         date: new Date(),
         updatedBy: createdBy || "Unknown",
@@ -1021,6 +1044,8 @@ app.post("/create-merch-account", async (req, res) => {
           { field: "Remarks", oldValue: "—", newValue: remarks },
         ],
       });
+      const io = req.app.get("io");
+      await notifyActivity(io, savedActivity, isSPX ? "SPX" : "CORE");
     } catch (logErr) {
       console.error("Failed to log new employee activity:", logErr);
     }
@@ -1161,14 +1186,30 @@ app.put("/assign-outlet-spx", async (req, res) => {
       });
     }
 
-    if (activityChanges.length > 0) {
+    if (activityChanges.filter((c) => c.field !== "Outlet").length > 0) {
       await logOutletActivity({
         employeeName,
         changes: activityChanges,
         updatedBy,
         updatedByRole,
       });
+
+      const io = req.app.get("io");
+      await notifyActivity(
+        io,
+        {
+          employeeName,
+          updatedBy: updatedBy || "Unknown",
+          updatedByRole: updatedByRole || "",
+          activityType: "UPDATE",
+          changes: activityChanges, // <-- add
+          outletName, // <-- add
+          date: new Date(),
+        },
+        "SPX",
+      );
     }
+
     // ─────────────────────────────────────────────────────────────────────
 
     const verified = await MerchAccount.collection.findOne({
@@ -1488,6 +1529,21 @@ app.put("/assign-outlet", async (req, res) => {
         updatedBy,
         updatedByRole,
       });
+
+      const io = req.app.get("io");
+      await notifyActivity(
+        io,
+        {
+          employeeName,
+          updatedBy: updatedBy || "Unknown",
+          updatedByRole: updatedByRole || "",
+          activityType: "UPDATE",
+          changes: activityChanges,
+          outletName,
+          date: new Date(),
+        },
+        "CORE",
+      );
     }
 
     // ── Step 7: Verify ────────────────────────────────────────────────────────
@@ -2632,6 +2688,29 @@ app.get("/auth", authMiddleware, async (req, res) => {
 });
 
 const PORT = process.env.PORT || 3001;
-app.listen(PORT, () => {
-  console.log(`🚀 Server is running on port ${PORT}`);
+// app.listen(PORT, () => {
+//   console.log(`🚀 Server is running on port ${PORT}`);
+// });
+
+const server = http.createServer(app);
+const io = new Server(server, {
+  cors: {
+    origin: [
+      "https://api-map.bmphrc.com", // production
+      "http://localhost:3000", // local dev
+      "http://192.168.68.50:3000", // local dev over LAN — match YOUR frontend URL/port
+    ],
+    methods: ["GET", "POST"],
+    credentials: true,
+  },
 });
+
+io.on("connection", (socket) => {
+  const { role, fullName } = socket.handshake.auth || {};
+  if (role) socket.join(role);
+  if (fullName) socket.join(`user:${fullName}`);
+});
+
+app.set("io", io);
+
+server.listen(PORT, () => console.log("✅ server + socket.io running"));
