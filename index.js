@@ -1249,6 +1249,214 @@ async function logOutletActivity({
   }
 }
 
+app.put("/transfer-outlet", async (req, res) => {
+  const mongoose = require("mongoose");
+  try {
+    const {
+      incomingEmployeeId,
+      targetOutletName,
+      sourceOutletName,
+      sittingEmployeeId,
+      deployDate,
+      updatedBy,
+      updatedByRole,
+    } = req.body;
+
+    if (!incomingEmployeeId || !targetOutletName || !sourceOutletName) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "incomingEmployeeId, targetOutletName, and sourceOutletName are required.",
+      });
+    }
+
+    const isSwap =
+      !!sittingEmployeeId && sittingEmployeeId !== incomingEmployeeId;
+    const today = deployDate ? new Date(deployDate) : new Date();
+
+    let incomingId, sittingId;
+    try {
+      incomingId = new mongoose.Types.ObjectId(incomingEmployeeId);
+      if (isSwap) sittingId = new mongoose.Types.ObjectId(sittingEmployeeId);
+    } catch (e) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Invalid employee id format." });
+    }
+
+    const incomingDoc = await MerchAccount.collection.findOne({
+      _id: incomingId,
+    });
+    if (!incomingDoc) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Incoming merchandiser not found." });
+    }
+    let sittingDoc = null;
+    if (isSwap) {
+      sittingDoc = await MerchAccount.collection.findOne({ _id: sittingId });
+      if (!sittingDoc) {
+        return res.status(404).json({
+          success: false,
+          message: "Sitting merchandiser not found.",
+        });
+      }
+    }
+
+    const nameOf = (d) => `${d.firstName} ${d.lastName}`;
+
+    const deployedSet = (outletName) => ({
+      deployStatus: "Deployed",
+      deploymentType: "Stationary",
+      outletsAssigned: [outletName],
+      applicantStatus: "",
+      backOutReason: "",
+      targetOnboardDate: null,
+      temporaryDeployEndDate: null,
+      undeployDate: null,
+      deployDate: today,
+      updatedAt: new Date(),
+    });
+
+    const historyFor = (outletName, note) => ({
+      _id: new mongoose.Types.ObjectId(),
+      outletName,
+      deployStatus: "Deployed",
+      deploymentType: "Stationary",
+      deployDate: today,
+      undeployDate: null,
+      applicantStatus: "",
+      note,
+      updatedBy: updatedBy || "Unknown",
+      updatedAt: new Date(),
+    });
+
+    const doWork = async (opts = {}) => {
+      await MerchAccount.collection.updateOne(
+        { _id: incomingId },
+        {
+          $set: deployedSet(targetOutletName),
+          $push: {
+            outletAssignmentHistory: historyFor(
+              targetOutletName,
+              isSwap
+                ? `Transferred from ${sourceOutletName} (swap with ${nameOf(sittingDoc)})`
+                : `Transferred from ${sourceOutletName}`,
+            ),
+          },
+        },
+        opts,
+      );
+
+      if (isSwap) {
+        await MerchAccount.collection.updateOne(
+          { _id: sittingId },
+          {
+            $set: deployedSet(sourceOutletName),
+            $push: {
+              outletAssignmentHistory: historyFor(
+                sourceOutletName,
+                `Transferred from ${targetOutletName} (swap with ${nameOf(incomingDoc)})`,
+              ),
+            },
+          },
+          opts,
+        );
+      }
+    };
+
+    const session = MerchAccount.collection.client
+      ? await MerchAccount.collection.client.startSession()
+      : null;
+
+    if (session) {
+      try {
+        await session.withTransaction(async () => {
+          await doWork({ session });
+        });
+      } finally {
+        await session.endSession();
+      }
+    } else {
+      await doWork();
+    }
+
+    // Activity log + notification (best-effort)
+    const changesFor = (person, fromOutlet, toOutlet) => [
+      {
+        field: "Deploy Status",
+        oldValue: person.deployStatus || "—",
+        newValue: "Deployed",
+      },
+      { field: "Outlet Assigned", oldValue: fromOutlet, newValue: toOutlet },
+      { field: "Outlet", oldValue: toOutlet, newValue: toOutlet },
+    ];
+
+    try {
+      const io = req.app.get("io");
+
+      await logOutletActivity({
+        employeeName: nameOf(incomingDoc),
+        changes: changesFor(incomingDoc, sourceOutletName, targetOutletName),
+        updatedBy,
+        updatedByRole,
+      });
+      await notifyActivity(
+        io,
+        {
+          employeeName: nameOf(incomingDoc),
+          updatedBy: updatedBy || "Unknown",
+          updatedByRole: updatedByRole || "",
+          activityType: "UPDATE",
+          changes: changesFor(incomingDoc, sourceOutletName, targetOutletName),
+          outletName: targetOutletName,
+          date: new Date(),
+        },
+        "CORE",
+      );
+
+      if (isSwap) {
+        await logOutletActivity({
+          employeeName: nameOf(sittingDoc),
+          changes: changesFor(sittingDoc, targetOutletName, sourceOutletName),
+          updatedBy,
+          updatedByRole,
+        });
+        await notifyActivity(
+          io,
+          {
+            employeeName: nameOf(sittingDoc),
+            updatedBy: updatedBy || "Unknown",
+            updatedByRole: updatedByRole || "",
+            activityType: "UPDATE",
+            changes: changesFor(sittingDoc, targetOutletName, sourceOutletName),
+            outletName: sourceOutletName,
+            date: new Date(),
+          },
+          "CORE",
+        );
+      }
+    } catch (logErr) {
+      console.error("transfer-outlet: logging failed (non-fatal):", logErr);
+    }
+
+    return res.status(200).json({
+      success: true,
+      mode: isSwap ? "swap" : "move",
+      message: isSwap
+        ? `Swap complete: ${nameOf(incomingDoc)} to ${targetOutletName}, ${nameOf(sittingDoc)} to ${sourceOutletName}.`
+        : `Transfer complete: ${nameOf(incomingDoc)} to ${targetOutletName}.`,
+    });
+  } catch (error) {
+    console.error("Error in /transfer-outlet:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Internal server error during transfer.",
+      error: error.message,
+    });
+  }
+});
+
 app.put("/assign-outlet", async (req, res) => {
   try {
     const mongoose = require("mongoose");
