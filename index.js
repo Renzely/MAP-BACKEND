@@ -401,6 +401,72 @@ app.put("/update-admin-outlet", async (req, res) => {
   }
 });
 
+// EDIT ADMIN
+
+app.put("/update-admin-info", async (req, res) => {
+  try {
+    const {
+      emailAddress,
+      firstName,
+      middleName,
+      lastName,
+      contactNum,
+      roleAccount,
+    } = req.body;
+
+    if (!emailAddress) {
+      return res
+        .status(400)
+        .json({ success: false, message: "emailAddress is required." });
+    }
+    if (!firstName || !lastName) {
+      return res.status(400).json({
+        success: false,
+        message: "firstName and lastName are required.",
+      });
+    }
+    if (!roleAccount) {
+      return res
+        .status(400)
+        .json({ success: false, message: "roleAccount is required." });
+    }
+
+    const updated = await AdminUser.findOneAndUpdate(
+      { emailAddress: emailAddress },
+      {
+        $set: {
+          firstName,
+          middleName: middleName || "Null",
+          lastName,
+          contactNum: contactNum || "",
+          roleAccount,
+          updatedAt: new Date(),
+        },
+      },
+      { new: true },
+    );
+
+    if (!updated) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Admin user not found." });
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: "Admin info updated successfully.",
+      data: updated,
+    });
+  } catch (error) {
+    console.error("Error in /update-admin-info:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Internal server error.",
+      error: error.message,
+    });
+  }
+});
+
 // USERS
 
 app.post("/get-all-user", async (req, res) => {
