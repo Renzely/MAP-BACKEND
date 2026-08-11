@@ -646,19 +646,45 @@ app.put("/update-employee/:id", async (req, res) => {
     }
 
     // ✅ Save recent activity log
+    // ✅ Save recent activity log
     if (changes.length > 0) {
       const isSPX = (original.clientAssigned || "")
         .toUpperCase()
         .includes("SPX");
-      await RecentActivity.create({
-        employeeName:
-          `${original.firstName || ""} ${original.lastName || ""}`.trim(),
+
+      const employeeName =
+        `${original.firstName || ""} ${original.lastName || ""}`.trim();
+
+      // capture the created activity
+      const savedActivity = await RecentActivity.create({
+        employeeName,
         updatedBy: adminName,
         changes,
         date: new Date(),
       });
-      const io = req.app.get("io");
-      await notifyActivity(io, savedActivity, "CORE");
+
+      // notify — wrapped so a notification failure NEVER fails the update
+      try {
+        const io = req.app.get("io");
+        await notifyActivity(
+          io,
+          {
+            employeeName,
+            updatedBy: adminName,
+            updatedByRole: updatedData.updatedByRole || "",
+            activityType: "UPDATE",
+            changes,
+            date: new Date(),
+            activityId: savedActivity?._id,
+          },
+          isSPX ? "SPX" : "CORE",
+        );
+      } catch (notifyErr) {
+        console.error(
+          "Notification failed (update still saved):",
+          notifyErr.message,
+        );
+      }
     }
 
     // ✅ Send success response

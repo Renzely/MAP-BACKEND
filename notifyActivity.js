@@ -2,8 +2,20 @@ const Notification = require("./notification");
 
 const OVERSIGHT_ROLES = ["HR HEAD", "EXECUTIVE DIRECTOR", "HR OFFICER", "MIS"];
 
-const SPX_ROLES = ["SPX HR SPECIALIST", "SPX COORDINATOR", ...OVERSIGHT_ROLES];
-const CORE_ROLES = ["HR SPECIALIST", "ACCOUNT SUPERVISOR", ...OVERSIGHT_ROLES];
+const SPX_ROLES = [
+  "SPX HR SPECIALIST",
+  "SPX COORDINATOR",
+  "SPX ACCOUNT SUPERVISOR",
+  "SPX OPERATION HEAD & LOGISTICS",
+  "SPX PAYROLL & BILLING",
+  ...OVERSIGHT_ROLES,
+];
+const CORE_ROLES = [
+  "HR SPECIALIST",
+  "ACCOUNT SUPERVISOR",
+  "HR COMPENSATION AND BENEFITS",
+  ...OVERSIGHT_ROLES,
+];
 
 async function notifyActivity(io, activity, domain = "CORE") {
   const targetRoles = domain === "SPX" ? SPX_ROLES : CORE_ROLES;
