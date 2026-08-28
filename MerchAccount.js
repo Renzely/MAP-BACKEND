@@ -7,6 +7,7 @@ const merchAccountSchema = new mongoose.Schema(
     remarks: { type: String, required: true },
     employeeNo: { type: String, required: false, default: null },
     riderid: { type: String, required: false, default: null },
+    riderstatus: { type: String, required: false, default: null },
     firstName: { type: String, required: true },
     suffix: { type: String },
     middleName: { type: String },
