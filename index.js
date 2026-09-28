@@ -13,6 +13,7 @@ const ClientProfile = require("./clientProfile");
 const bcrypt = require("bcryptjs");
 const User = require("./users");
 const AdminUser = require("./adminUsers");
+const OutletSlot = require("./OutletSlot");
 const authMiddleware = require("./auth");
 const jwt = require("jsonwebtoken");
 require("dotenv").config();
@@ -131,6 +132,144 @@ app.get("/user/outlets", auth, async (req, res) => {
   } catch (error) {
     console.error("Error in /user/outlets:", error);
     res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// TEST OUTLETS
+
+// ── GET /outlet-slots → all added slots (shaped like outlets for the frontend) ──
+app.get("/outlet-slots", async (req, res) => {
+  try {
+    const mongoose = require("mongoose");
+    const coll = mongoose.connection.db.collection("outletslots");
+    const slots = await coll.find({}).toArray();
+    const data = slots.map((s) => ({
+      id: s.slotId,
+      region: s.region || "",
+      outlet: s.outlet,
+      accountSupervisor: s.accountSupervisor || "",
+      adp: s.adp || "",
+      payrollAccount: s.payrollAccount || "",
+      parentOutlet: s.parentOutlet,
+      isSlot: true,
+    }));
+    return res.status(200).json({ success: true, data });
+  } catch (error) {
+    console.error("Error in GET /outlet-slots:", error);
+    return res
+      .status(500)
+      .json({ success: false, message: "Failed to fetch outlet slots." });
+  }
+});
+
+// ── POST /outlet-slots → create the next slot ("- 2", then "- 3") for a base ──
+app.post("/outlet-slots", async (req, res) => {
+  try {
+    const mongoose = require("mongoose");
+    const coll = mongoose.connection.db.collection("outletslots");
+
+    const {
+      parentOutlet,
+      outlet,
+      region,
+      accountSupervisor,
+      adp,
+      payrollAccount,
+      createdBy,
+    } = req.body;
+
+    if (!parentOutlet || !outlet) {
+      return res.status(400).json({
+        success: false,
+        message: "parentOutlet and outlet are required.",
+      });
+    }
+
+    // Cap at "- 3": a base may have at most 2 slots (- 2 and - 3).
+    const existingCount = await coll.countDocuments({ parentOutlet });
+    if (existingCount >= 2) {
+      return res.status(400).json({
+        success: false,
+        message: `"${parentOutlet}" already has - 2 and - 3.`,
+      });
+    }
+
+    // Reject duplicate slot name.
+    const dupe = await coll.findOne({ outlet });
+    if (dupe) {
+      return res
+        .status(400)
+        .json({ success: false, message: `"${outlet}" already exists.` });
+    }
+
+    // Next numeric slotId (base outlet ids are 1..1243; keep slots well clear).
+    const lastArr = await coll.find({}).sort({ slotId: -1 }).limit(1).toArray();
+    const nextSlotId = (lastArr[0]?.slotId || 900000) + 1;
+
+    const doc = {
+      slotId: nextSlotId,
+      parentOutlet,
+      outlet,
+      region: region || "",
+      accountSupervisor: accountSupervisor || "",
+      adp: adp || "",
+      payrollAccount: payrollAccount || "",
+      createdBy: createdBy || "Unknown",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+    await coll.insertOne(doc);
+
+    return res.status(201).json({
+      success: true,
+      message: "Outlet slot created.",
+      data: {
+        id: doc.slotId,
+        region: doc.region,
+        outlet: doc.outlet,
+        accountSupervisor: doc.accountSupervisor,
+        adp: doc.adp,
+        payrollAccount: doc.payrollAccount,
+        parentOutlet: doc.parentOutlet,
+        isSlot: true,
+      },
+    });
+  } catch (error) {
+    console.error("Error in POST /outlet-slots:", error);
+    return res
+      .status(500)
+      .json({ success: false, message: "Failed to create outlet slot." });
+  }
+});
+
+// ── DELETE /outlet-slots/:id → remove one slot by its numeric slotId ──
+app.delete("/outlet-slots/:id", async (req, res) => {
+  try {
+    const mongoose = require("mongoose");
+    const coll = mongoose.connection.db.collection("outletslots");
+
+    const slotId = Number(req.params.id);
+    if (!slotId || Number.isNaN(slotId)) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Invalid slot id." });
+    }
+
+    const result = await coll.deleteOne({ slotId });
+    if (result.deletedCount === 0) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Slot not found." });
+    }
+
+    return res
+      .status(200)
+      .json({ success: true, message: "Outlet slot removed." });
+  } catch (error) {
+    console.error("Error in DELETE /outlet-slots/:id:", error);
+    return res
+      .status(500)
+      .json({ success: false, message: "Failed to remove outlet slot." });
   }
 });
 
@@ -988,6 +1127,7 @@ app.post("/create-merch-account", async (req, res) => {
       remarks,
       riderid,
       riderstatus,
+      department,
       employeeNo,
       firstName,
       suffix,
@@ -1087,6 +1227,7 @@ app.post("/create-merch-account", async (req, res) => {
       employeeNo: isApplicant ? null : employeeNo,
       riderid,
       riderstatus,
+      department,
       firstName,
       suffix,
       middleName,
@@ -1402,6 +1543,7 @@ app.put("/transfer-outlet", async (req, res) => {
     const deployedSet = (outletName) => ({
       deployStatus: "Deployed",
       deploymentType: "Stationary",
+      employmentStatus: "Regular",
       outletsAssigned: [outletName],
       applicantStatus: "",
       backOutReason: "",
@@ -1417,6 +1559,7 @@ app.put("/transfer-outlet", async (req, res) => {
       outletName,
       deployStatus: "Deployed",
       deploymentType: "Stationary",
+      employmentStatus: "Regular",
       deployDate: today,
       undeployDate: null,
       applicantStatus: "",
@@ -1559,6 +1702,8 @@ app.put("/assign-outlet", async (req, res) => {
       employeeId,
       deployStatus,
       deploymentType,
+      employmentStatus,
+      rateCardId,
       deployDate,
       undeployDate,
       applicantStatus,
@@ -1575,35 +1720,28 @@ app.put("/assign-outlet", async (req, res) => {
       });
     }
 
+    let empObjectId;
+    if (employeeId) {
+      try {
+        empObjectId = new mongoose.Types.ObjectId(employeeId);
+      } catch (e) {
+        return res
+          .status(400)
+          .json({ success: false, message: "Invalid employeeId format." });
+      }
+    }
+
     if (!employeeId) {
-      // await MerchAccount.collection.updateMany(
-      //   {
-      //     clientAssigned: { $regex: /ECOSSENTIAL FOODS CORP/i },
-      //     outletsAssigned: outletName,
-      //     deploymentType: { $ne: "Roving" },
-      //   },
-      //   { $pull: { outletsAssigned: outletName } },
-      // );
       await MerchAccount.collection.updateMany(
         {
           clientAssigned: { $regex: /ECOSSENTIAL FOODS CORP/i },
-          outletsAssigned: outletName, // matches docs having "SUPER 8"
-          _id: { $ne: empObjectId }, // exclude Juan
+          outletsAssigned: outletName,
         },
         { $pull: { outletsAssigned: outletName } },
       );
       return res
         .status(200)
         .json({ success: true, message: "Outlet assignment cleared." });
-    }
-
-    let empObjectId;
-    try {
-      empObjectId = new mongoose.Types.ObjectId(employeeId);
-    } catch (e) {
-      return res
-        .status(400)
-        .json({ success: false, message: "Invalid employeeId format." });
     }
 
     // ── Step 1: Remove outlet from any OTHER employee ─────────────────────────
@@ -1633,18 +1771,19 @@ app.put("/assign-outlet", async (req, res) => {
       ? currentDoc.outletsAssigned.filter(Boolean)
       : [];
 
-    // Roving → same merchandiser may hold multiple outlets (append this one, keep the rest).
-    // Stationary → merchandiser is tied to THIS outlet only (replace the array).
     const newOutletsAssigned =
       deploymentType === "Roving"
         ? existingOutlets.includes(outletName)
           ? existingOutlets
           : [...existingOutlets, outletName]
         : [outletName];
+
     // ── Step 4: Build $set fields ─────────────────────────────────────────────
     const setFields = {
       deployStatus,
       deploymentType: deploymentType || "Stationary",
+      employmentStatus: employmentStatus || "Regular",
+      rateCardId: rateCardId ?? null,
       outletsAssigned: newOutletsAssigned,
       updatedAt: new Date(),
     };
@@ -1684,6 +1823,8 @@ app.put("/assign-outlet", async (req, res) => {
       outletName,
       deployStatus,
       deploymentType: deploymentType || "Stationary",
+      employmentStatus: employmentStatus || "Regular",
+      rateCardId: rateCardId ?? null,
       deployDate: deployDate ? new Date(deployDate) : null,
       undeployDate: undeployDate ? new Date(undeployDate) : null,
       applicantStatus: applicantStatus || "",
@@ -1716,6 +1857,18 @@ app.put("/assign-outlet", async (req, res) => {
         field: "Type of Deployment",
         oldValue: currentDoc.deploymentType || "Stationary",
         newValue: deploymentType || "Stationary",
+      });
+    }
+
+    // Employment Status change
+    if (
+      (currentDoc.employmentStatus || "Regular") !==
+      (employmentStatus || "Regular")
+    ) {
+      activityChanges.push({
+        field: "Employment Status",
+        oldValue: currentDoc.employmentStatus || "Regular",
+        newValue: employmentStatus || "Regular",
       });
     }
 
@@ -2348,6 +2501,7 @@ app.get("/get-merch-accounts", async (req, res) => {
         remarks: 1,
         riderid: 1,
         riderstatus: 1,
+        department: 1,
         employeeNo: 1,
         firstName: 1,
         suffix: 1,
@@ -2384,6 +2538,8 @@ app.get("/get-merch-accounts", async (req, res) => {
         outletStatusMap: 1,
         deployStatus: 1,
         deploymentType: 1,
+        employmentStatus: 1,
+        rateCardId: 1,
         deployDate: 1,
         undeployDate: 1,
         applicantStatus: 1,

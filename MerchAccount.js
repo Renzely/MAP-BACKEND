@@ -8,6 +8,7 @@ const merchAccountSchema = new mongoose.Schema(
     employeeNo: { type: String, required: false, default: null },
     riderid: { type: String, required: false, default: null },
     riderstatus: { type: String, required: false, default: null },
+    department: { type: String, required: false, default: null },
     firstName: { type: String, required: true },
     suffix: { type: String },
     middleName: { type: String },
@@ -93,6 +94,9 @@ const merchAccountSchema = new mongoose.Schema(
       enum: ["Stationary", "Roving"],
       default: "Stationary",
     },
+
+    rateCardId: { type: Number, default: null },
+    employmentStatus: { type: String, default: "Regular" },
 
     deployDate: { type: Date, default: null },
     temporaryDeployEndDate: { type: Date, default: null },
