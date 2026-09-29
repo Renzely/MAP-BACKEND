@@ -852,44 +852,64 @@ app.post("/check-duplicate-ids", async (req, res) => {
   try {
     const { sss, philhealth, hdmf, tin } = req.body;
 
+    // Normalize once. Blank/placeholder inputs are ignored entirely.
+    const norm = (v) => (v === null || v === undefined ? "" : String(v).trim());
+    const inSss = norm(sss);
+    const inPhil = norm(philhealth);
+    const inHdmf = norm(hdmf);
+    const inTin = norm(tin);
+
     const conditions = [];
-    if (sss?.trim()) conditions.push({ sss });
-    if (philhealth?.trim()) conditions.push({ philhealth });
-    if (hdmf?.trim()) conditions.push({ hdmf });
-    if (tin?.trim()) conditions.push({ tin });
+    if (inSss) conditions.push({ sss: inSss });
+    if (inPhil) conditions.push({ philhealth: inPhil });
+    if (inHdmf) conditions.push({ hdmf: inHdmf });
+    if (inTin) conditions.push({ tin: inTin });
 
     if (conditions.length === 0) {
       return res.status(200).json({ message: "No duplicates found." });
     }
 
-    // Check any record that matches any of the given numbers
-    const existing = await MerchAccount.find({
-      $or: conditions,
+    const existing = await MerchAccount.find({ $or: conditions }).lean();
+
+    const duplicates = {};
+    const conflicts = {}; // which record each duplicate matched
+
+    existing.forEach((record) => {
+      const who =
+        `${record.lastName || ""}, ${record.firstName || ""}`.trim() +
+        (record.employeeNo ? ` (Emp #${record.employeeNo})` : "");
+
+      // Only a duplicate when BOTH sides are non-empty AND equal after trim.
+      if (inSss && norm(record.sss) === inSss) {
+        duplicates.sss = `SSS number already used by ${who}.`;
+        conflicts.sss = who;
+      }
+      if (inPhil && norm(record.philhealth) === inPhil) {
+        duplicates.philhealth = `PhilHealth number already used by ${who}.`;
+        conflicts.philhealth = who;
+      }
+      if (inHdmf && norm(record.hdmf) === inHdmf) {
+        duplicates.hdmf = `HDMF number already used by ${who}.`;
+        conflicts.hdmf = who;
+      }
+      if (inTin && norm(record.tin) === inTin) {
+        duplicates.tin = `TIN number already used by ${who}.`;
+        conflicts.tin = who;
+      }
     });
 
-    if (existing.length > 0) {
-      const duplicates = {};
-      existing.forEach((record) => {
-        if (sss && record.sss === sss)
-          duplicates.sss = "SSS number already exists.";
-        if (philhealth && record.philhealth === philhealth)
-          duplicates.philhealth = "PhilHealth number already exists.";
-        if (hdmf && record.hdmf === hdmf)
-          duplicates.hdmf = "HDMF number already exists.";
-        if (tin && record.tin === tin)
-          duplicates.tin = "TIN number already exists.";
-      });
-
+    if (Object.keys(duplicates).length > 0) {
       return res.status(409).json({
         message: "Duplicate detected.",
         duplicates,
+        conflicts,
       });
     }
 
-    res.status(200).json({ message: "No duplicates found." });
+    return res.status(200).json({ message: "No duplicates found." });
   } catch (error) {
     console.error("Error checking duplicates:", error);
-    res.status(500).json({ message: "Server error." });
+    return res.status(500).json({ message: "Server error." });
   }
 });
 
