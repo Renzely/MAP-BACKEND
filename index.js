@@ -1191,7 +1191,8 @@ app.post("/create-merch-account", async (req, res) => {
         !birthday ||
         !position ||
         !homeAddress ||
-        !clientAssigned
+        !clientAssigned ||
+        !modeOfDisbursement
       ) {
         return res
           .status(400)
@@ -1252,11 +1253,9 @@ app.post("/create-merch-account", async (req, res) => {
       suffix,
       middleName,
       lastName,
-      modeOfDisbursement: isApplicant ? null : modeOfDisbursement,
+      modeOfDisbursement: modeOfDisbursement || null,
       accountNumber:
-        isApplicant || modeOfDisbursement === "TBA" || !accountNumber
-          ? null
-          : accountNumber,
+        modeOfDisbursement === "TBA" || !accountNumber ? null : accountNumber,
       contact,
       email: email?.trim() || undefined,
       birthday,
