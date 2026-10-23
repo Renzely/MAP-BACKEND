@@ -27,7 +27,13 @@ async function notifyActivity(io, activity, domain = "CORE") {
   const deployChange = changes.find((c) => c.field === "Deploy Status");
 
   let message;
-  if (activity.activityType === "NEW_EMPLOYEE") {
+  if (activity.activityType === "EXPORT") {
+    const records = changes.find((c) => c.field === "Records");
+    const label = activity.employeeName || "data"; // the export name
+    message = `${activity.updatedBy} exported ${label}${
+      records ? ` (${records.newValue} records)` : ""
+    }`;
+  } else if (activity.activityType === "NEW_EMPLOYEE") {
     message = `${activity.updatedBy} registered ${activity.employeeName}`;
   } else if (assigned) {
     message = `${activity.updatedBy} assigned ${activity.employeeName} to ${assigned.newValue}`;
