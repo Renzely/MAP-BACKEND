@@ -848,6 +848,45 @@ app.get("/recent-activities", async (req, res) => {
   }
 });
 
+app.post("/log-export", async (req, res) => {
+  try {
+    const { exportName, rowCount, clientAssigned, updatedBy, updatedByRole } =
+      req.body;
+
+    if (!updatedBy) {
+      return res.status(400).json({ message: "Missing user info" });
+    }
+
+    const savedActivity = await RecentActivity.create({
+      employeeName: exportName || "Export",
+      date: new Date(),
+      updatedBy: updatedBy || "Unknown",
+      updatedByRole: updatedByRole || "",
+      activityType: "EXPORT",
+      changes: [
+        { field: "Export", oldValue: "—", newValue: exportName || "Export" },
+        { field: "Client", oldValue: "—", newValue: clientAssigned || "—" },
+        { field: "Records", oldValue: "—", newValue: String(rowCount ?? 0) },
+      ],
+    });
+
+    try {
+      const io = req.app.get("io");
+      const isSPX = (clientAssigned || "").toUpperCase().includes("SPX");
+      await notifyActivity(io, savedActivity, isSPX ? "SPX" : "CORE");
+    } catch (notifyErr) {
+      console.error("Failed to notify export activity:", notifyErr);
+    }
+
+    return res
+      .status(200)
+      .json({ message: "Export logged", data: savedActivity });
+  } catch (error) {
+    console.error("Error logging export:", error);
+    return res.status(500).json({ message: "Internal server error" });
+  }
+});
+
 app.post("/check-duplicate-ids", async (req, res) => {
   try {
     const { sss, philhealth, hdmf, tin } = req.body;
