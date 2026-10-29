@@ -13,6 +13,7 @@ const ClientProfile = require("./clientProfile");
 const bcrypt = require("bcryptjs");
 const User = require("./users");
 const AdminUser = require("./adminUsers");
+const RovingGroup = require("./rovinggroup");
 const OutletSlot = require("./OutletSlot");
 const authMiddleware = require("./auth");
 const jwt = require("jsonwebtoken");
@@ -2781,6 +2782,163 @@ app.put("/update-employee-status", async (req, res) => {
       message: "Internal server error.",
       error: error.message,
     });
+  }
+});
+
+// Build the next Roving ID from the highest sequence currently stored.
+async function nextRovingId() {
+  const top = await RovingGroup.findOne({})
+    .sort({ rovingSeq: -1 })
+    .select("rovingSeq")
+    .lean();
+  const nextSeq = (top?.rovingSeq || 0) + 1;
+  return {
+    rovingSeq: nextSeq,
+    rovingId: `ROV-${String(nextSeq).padStart(4, "0")}`,
+  };
+}
+
+// ── List all roving packages ───────────────────────────────────────────────
+app.get("/roving-groups", async (req, res) => {
+  try {
+    const data = await RovingGroup.find({}).sort({ createdAt: -1 }).lean();
+    return res.status(200).json({ data });
+  } catch (err) {
+    console.error("GET /roving-groups error:", err);
+    return res.status(500).json({ message: "Server error" });
+  }
+});
+
+// ── Create a roving package (Roving ID assigned automatically) ──────────────
+app.post("/roving-groups", async (req, res) => {
+  try {
+    const { accountSupervisor, region, outlets, updatedBy } = req.body;
+
+    if (!accountSupervisor) {
+      return res
+        .status(400)
+        .json({ message: "Account Supervisor is required." });
+    }
+    if (!Array.isArray(outlets) || outlets.length < 2) {
+      return res
+        .status(400)
+        .json({ message: "A roving package needs at least 2 outlets." });
+    }
+
+    const cleanOutlets = [...new Set(outlets.filter(Boolean))];
+
+    // Auto-generate the Roving ID. Retry once on a rare sequence collision.
+    let doc;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const { rovingSeq, rovingId } = await nextRovingId();
+      try {
+        doc = await RovingGroup.create({
+          rovingId,
+          rovingSeq,
+          accountSupervisor,
+          region: region || "",
+          outlets: cleanOutlets,
+          createdBy: updatedBy || "Unknown",
+        });
+        break;
+      } catch (e) {
+        // Duplicate rovingId/rovingSeq from a concurrent create → try again.
+        if (
+          e.code === 11000 &&
+          attempt === 0 &&
+          (e.keyPattern?.rovingId || e.keyPattern?.rovingSeq)
+        ) {
+          continue;
+        }
+        throw e;
+      }
+    }
+
+    return res
+      .status(200)
+      .json({ message: "Roving package created", data: doc });
+  } catch (err) {
+    if (err.code === 11000) {
+      return res
+        .status(409)
+        .json({ message: "Could not assign a Roving ID, please try again." });
+    }
+    if (err.name === "ValidationError") {
+      return res.status(400).json({ message: err.message });
+    }
+    console.error("POST /roving-groups error:", err);
+    return res.status(500).json({ message: "Server error" });
+  }
+});
+
+// ── Update a roving package (Roving ID is never changed) ────────────────────
+app.put("/roving-groups/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({ message: "Invalid package id." });
+    }
+
+    const { accountSupervisor, region, outlets, updatedBy } = req.body;
+
+    if (!accountSupervisor) {
+      return res
+        .status(400)
+        .json({ message: "Account Supervisor is required." });
+    }
+    if (!Array.isArray(outlets) || outlets.length < 2) {
+      return res
+        .status(400)
+        .json({ message: "A roving package needs at least 2 outlets." });
+    }
+
+    const cleanOutlets = [...new Set(outlets.filter(Boolean))];
+
+    // Note: rovingId / rovingSeq are intentionally NOT in the $set — the id
+    // stays fixed for the life of the package.
+    const updated = await RovingGroup.findByIdAndUpdate(
+      id,
+      {
+        $set: {
+          accountSupervisor,
+          region: region || "",
+          outlets: cleanOutlets,
+          updatedBy: updatedBy || "Unknown",
+        },
+      },
+      { new: true, runValidators: true },
+    );
+
+    if (!updated) {
+      return res.status(404).json({ message: "Roving package not found." });
+    }
+    return res
+      .status(200)
+      .json({ message: "Roving package updated", data: updated });
+  } catch (err) {
+    if (err.name === "ValidationError") {
+      return res.status(400).json({ message: err.message });
+    }
+    console.error("PUT /roving-groups/:id error:", err);
+    return res.status(500).json({ message: "Server error" });
+  }
+});
+
+// ── Delete a roving package ─────────────────────────────────────────────────
+app.delete("/roving-groups/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({ message: "Invalid package id." });
+    }
+    const deleted = await RovingGroup.findByIdAndDelete(id);
+    if (!deleted) {
+      return res.status(404).json({ message: "Roving package not found." });
+    }
+    return res.status(200).json({ message: "Roving package deleted" });
+  } catch (err) {
+    console.error("DELETE /roving-groups/:id error:", err);
+    return res.status(500).json({ message: "Server error" });
   }
 });
 
